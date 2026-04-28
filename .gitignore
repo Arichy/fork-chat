@@ -13,7 +13,8 @@ dist-ssr
 *.local
 
 # Auto-generated files
-src/routeTree.gen.ts
+**/routeTree.gen.ts
+.tanstack/
 
 # Editor directories and files
 .vscode/*
@@ -25,3 +26,11 @@ src/routeTree.gen.ts
 *.njsproj
 *.sln
 *.sw?
+
+.env
+
+target
+
+# Local agent / worktree state
+.claude/worktrees/
+.claude/settings.local.json

@@ -1,0 +1,10 @@
+/* Dialog enter animation for first open — base-ui skips data-starting-style on initial render */
+@starting-style {
+  [data-open] {
+    opacity: 0;
+  }
+
+  [data-dialog-popup] {
+    transform: scale(0.95);
+  }
+}
