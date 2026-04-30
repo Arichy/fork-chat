@@ -1,14 +1,17 @@
 use axum::{
-    extract::{Path, State},
     Json,
+    extract::{Path, State},
 };
 use serde::{Deserialize, Serialize};
 use tracing::{error, info};
 use uuid::Uuid;
 
 use crate::config::AppState;
-use crate::db::{create_turn, get_session, get_session_tree, get_turn, session_has_root_turn, update_turn};
 use crate::db::sessions::update_session_title;
+use crate::db::{
+    create_turn, get_session, get_session_tree, get_turn_in_session, session_has_root_turn,
+    update_turn,
+};
 use crate::error::AppError;
 use crate::models::Turn;
 use crate::openai::{OpenaiAdapter, build_input_for_turn, get_instructions};
@@ -62,10 +65,10 @@ pub async fn create_turn_handler(
 
     // Disallow creating children of failed turns
     if let Some(parent_id) = req.parent_turn_id {
-        let parent = get_turn(&state.db, parent_id).await?;
+        let parent = get_turn_in_session(&state.db, session_id, parent_id).await?;
         if parent.status == "failed" {
             return Err(AppError::BadRequest(
-                "Cannot reply to a failed turn. Use retry instead.".to_string()
+                "Cannot reply to a failed turn. Use retry instead.".to_string(),
             ));
         }
     }
@@ -81,8 +84,8 @@ pub async fn create_turn_handler(
     )
     .await?;
 
-    let input = build_input_for_turn(&state.db, &session, req.parent_turn_id, &req.user_text)
-        .await?;
+    let input =
+        build_input_for_turn(&state.db, &session, req.parent_turn_id, &req.user_text).await?;
 
     let instructions = get_instructions(&session);
 
@@ -157,9 +160,9 @@ pub async fn create_turn_handler(
 
 pub async fn get_turn_handler(
     State(state): State<AppState>,
-    Path((_session_id, turn_id)): Path<(Uuid, Uuid)>,
+    Path((session_id, turn_id)): Path<(Uuid, Uuid)>,
 ) -> Result<Json<TurnResponse>, AppError> {
-    let turn = get_turn(&state.db, turn_id).await?;
+    let turn = get_turn_in_session(&state.db, session_id, turn_id).await?;
     Ok(Json(TurnResponse { turn }))
 }
 
@@ -190,8 +193,8 @@ pub async fn retry_turn_handler(
         return Err(AppError::UnsupportedProvider(req.provider));
     }
 
-    let old_turn = get_turn(&state.db, old_turn_id).await?;
     let session = get_session(&state.db, session_id).await?;
+    let old_turn = get_turn_in_session(&state.db, session_id, old_turn_id).await?;
 
     let user_text = old_turn.user_text.clone().unwrap_or_default();
 
@@ -205,13 +208,8 @@ pub async fn retry_turn_handler(
     )
     .await?;
 
-    let input = build_input_for_turn(
-        &state.db,
-        &session,
-        old_turn.parent_turn_id,
-        &user_text,
-    )
-    .await?;
+    let input =
+        build_input_for_turn(&state.db, &session, old_turn.parent_turn_id, &user_text).await?;
 
     let instructions = get_instructions(&session);
 
@@ -222,10 +220,7 @@ pub async fn retry_turn_handler(
 
     match result {
         Ok(response) => {
-            info!(
-                "Retry API call successful, response_id: {}",
-                response.id
-            );
+            info!("Retry API call successful, response_id: {}", response.id);
 
             let assistant_text = OpenaiAdapter::extract_assistant_text(&response);
             let (input_tokens, output_tokens) = OpenaiAdapter::extract_usage(&response);

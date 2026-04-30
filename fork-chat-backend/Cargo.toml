@@ -29,7 +29,11 @@ dotenvy = "0.15.7"
 [dev-dependencies]
 tokio-test = "0.4"
 wiremock = "0.6"
-testcontainers = "0.24"
+# `watchdog` makes testcontainers tear down running containers on SIGINT/SIGTERM
+# (e.g. Ctrl-C during `cargo test`) instead of leaking them.
+testcontainers = { version = "0.24", features = ["watchdog"] }
 testcontainers-modules = { version = "0.12", features = ["postgres"] }
 tower = "0.5"
 tower-service = "0.3"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+backoff = "0.4"

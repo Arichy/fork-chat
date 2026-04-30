@@ -34,3 +34,12 @@ target
 # Local agent / worktree state
 .claude/worktrees/
 .claude/settings.local.json
+
+# Test artifacts
+playwright-report/
+test-results/
+coverage/
+# Vitest browser-mode auto-captures failure screenshots here
+**/__screenshots__/
+# Vitest browser-mode test attachments (screenshots, traces, etc.)
+**/.vitest-attachments/

@@ -1,3 +1,19 @@
+# Start the local development Postgres (docker-compose.yml, port 5432).
+# Data persists in the `fork_chat_pg_data` named volume across restarts.
+db-up:
+  docker compose up -d
+  @echo "Waiting for Postgres to be ready..."
+  @until docker compose exec -T postgres pg_isready -U postgres -d fork-chat >/dev/null 2>&1; do sleep 0.5; done
+  @echo "Postgres is ready on localhost:5432."
+
+# Stop the dev Postgres (keeps data).
+db-down:
+  docker compose down
+
+# Stop the dev Postgres AND wipe the data volume.
+db-nuke:
+  docker compose down -v
+
 reset-db:
   sqlx database drop -y
   sqlx database create
@@ -5,4 +21,14 @@ reset-db:
 
 dev:
   bacon run-long
+
+# Docker socket auto-discovery for OrbStack / Colima / rootless Docker Desktop
+# lives in tests/common/mod.rs (ensure_docker_host) so plain `cargo test` and
+# IDE test runners work too. Nothing needed here.
+
+test:
+  cargo nextest run
+
+test-all:
+  cargo nextest run --all-targets
   

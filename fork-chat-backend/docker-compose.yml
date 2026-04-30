@@ -1,0 +1,31 @@
+# Local development Postgres for the backend.
+#
+# Usage:
+#   docker compose up -d   # start db in background
+#   docker compose down    # stop db (data persists in the named volume)
+#   docker compose down -v # stop db AND wipe data
+#
+# The image tag intentionally matches the one used by the integration test
+# harness (tests/common/mod.rs) so dev and test run on the same Postgres
+# major version. Bump both together.
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: fork-chat-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: fork-chat
+    ports:
+      - "5432:5432"
+    volumes:
+      - fork_chat_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d fork-chat"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  fork_chat_pg_data:

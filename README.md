@@ -1,4 +1,4 @@
-# fork-chat
+# ForkChat
 
 A chat app where **every conversation is a tree**. Each turn is a node; you can fork from any node and explore a different branch. Each path from the root is an independent context sent to the LLM.
 
@@ -29,9 +29,10 @@ fork-chat/
 
 - Node.js ≥ 20 and `pnpm`
 - Rust (stable) and `cargo`
-- PostgreSQL 14+
+- PostgreSQL 14+ for local development, or Docker for `just db-up`
 - `sqlx-cli` (`cargo install sqlx-cli --no-default-features --features postgres`)
-- Optional: [`just`](https://github.com/casey/just), [`bacon`](https://github.com/Canop/bacon)
+- Docker for backend integration tests (`testcontainers`)
+- Optional: [`just`](https://github.com/casey/just), [`bacon`](https://github.com/Canop/bacon), [`cargo-nextest`](https://nexte.st/)
 
 ## Setup
 
@@ -40,6 +41,7 @@ fork-chat/
 ```bash
 cd fork-chat-backend
 cp .env.example .env          # then fill in OPENAI_API_KEY etc.
+just db-up                    # optional: starts local Postgres via Docker
 just reset-db                 # drops, recreates DB and runs migrations
 cargo run                     # starts server on $SERVER_ADDR (default 0.0.0.0:3000)
 ```
@@ -90,7 +92,8 @@ See [PLAN.md](PLAN.md) for the full design.
 
 ## Development notes
 
-- **Tests:** `cargo test` runs unit tests; the Postgres integration test is `#[ignore]` by default — enable with `cargo test -- --ignored` and a running DB.
+- **Backend tests:** `cargo test` runs the full backend suite. Integration tests use `testcontainers` to start isolated PostgreSQL containers, so Docker must be running. `just test` runs the same suite through `cargo nextest run`.
+- **Frontend tests:** run `pnpm test:install` once to install Chromium for Vitest browser mode, then use `pnpm test:run`. Use `pnpm test:node` or `pnpm test:browser` to run one project.
 - **Lint:** frontend uses Biome (`pnpm check:fix`); backend uses `cargo check` / `cargo clippy`.
 
 ## License

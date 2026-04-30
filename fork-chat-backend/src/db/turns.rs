@@ -7,7 +7,7 @@ use crate::models::Turn;
 
 pub async fn session_has_root_turn(db: &PgPool, session_id: Uuid) -> Result<bool> {
     let result = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM turns WHERE session_id = $1 AND parent_turn_id IS NULL)"
+        "SELECT EXISTS(SELECT 1 FROM turns WHERE session_id = $1 AND parent_turn_id IS NULL)",
     )
     .bind(session_id)
     .fetch_one(db)
@@ -90,28 +90,35 @@ pub async fn update_turn(
     .map_err(|e| AppError::DatabaseError(format!("Failed to update turn: {}", e)))
 }
 
-pub async fn get_turn(db: &PgPool, id: Uuid) -> Result<Turn> {
-    sqlx::query_as::<_, Turn>("SELECT * FROM turns WHERE id = $1")
+pub async fn get_turn_in_session(db: &PgPool, session_id: Uuid, id: Uuid) -> Result<Turn> {
+    sqlx::query_as::<_, Turn>("SELECT * FROM turns WHERE id = $1 AND session_id = $2")
         .bind(id)
+        .bind(session_id)
         .fetch_optional(db)
         .await?
-        .ok_or_else(|| AppError::NotFound(format!("Turn not found: {}", id)))
+        .ok_or_else(|| AppError::NotFound(format!("Turn not found in session: {}", id)))
 }
 
-pub async fn get_path_to_turn(db: &PgPool, turn_id: Option<Uuid>) -> Result<Vec<Turn>> {
+pub async fn get_path_to_turn_in_session(
+    db: &PgPool,
+    session_id: Uuid,
+    turn_id: Option<Uuid>,
+) -> Result<Vec<Turn>> {
     if let Some(id) = turn_id {
         sqlx::query_as::<_, Turn>(
             r#"
             WITH RECURSIVE path AS (
-                SELECT * FROM turns WHERE id = $1
+                SELECT * FROM turns WHERE id = $1 AND session_id = $2
                 UNION ALL
                 SELECT t.* FROM turns t
                 JOIN path p ON t.id = p.parent_turn_id
+                WHERE t.session_id = $2
             )
             SELECT * FROM path ORDER BY created_at ASC
             "#,
         )
         .bind(id)
+        .bind(session_id)
         .fetch_all(db)
         .await
         .map_err(|e| AppError::DatabaseError(format!("Failed to get path to turn: {}", e)))

@@ -12,7 +12,13 @@
     "lint:fix": "biome lint --write src",
     "check": "biome check src",
     "check:fix": "biome check --write src",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "test:node": "vitest run --project node",
+    "test:browser": "vitest run --project browser",
+    "test:ui": "vitest --ui",
+    "test:install": "playwright install chromium"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",
@@ -45,6 +51,10 @@
     "@biomejs/biome": "2.4.12",
     "@rolldown/plugin-babel": "^0.2.3",
     "@tanstack/router-plugin": "^1.167.22",
+    "@testing-library/dom": "^10.4.0",
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.1.0",
+    "@testing-library/user-event": "^14.5.2",
     "@types/babel__core": "^7.20.5",
     "@types/d3-flextree": "^2.1.4",
     "@types/dagre": "^0.7.54",
@@ -52,9 +62,15 @@
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.1",
+    "@vitest/browser-playwright": "^4.1.5",
+    "@vitest/ui": "^4.1.5",
     "babel-plugin-react-compiler": "^1.0.0",
+    "jsdom": "^25.0.1",
+    "msw": "^2.7.0",
+    "playwright": "^1.49.1",
     "sass-embedded": "^1.99.0",
     "typescript": "~6.0.2",
-    "vite": "^8.0.9"
+    "vite": "^8.0.9",
+    "vitest": "^4.1.5"
   }
 }

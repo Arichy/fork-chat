@@ -6,11 +6,11 @@ use crate::models::{Session, Turn};
 
 pub async fn build_input_for_turn(
     db: &PgPool,
-    _session: &Session,
+    session: &Session,
     parent_turn_id: Option<uuid::Uuid>,
     new_user_content: &str,
 ) -> Result<Vec<InputItem>> {
-    let turns = crate::db::get_path_to_turn(db, parent_turn_id).await?;
+    let turns = crate::db::get_path_to_turn_in_session(db, session.id, parent_turn_id).await?;
 
     let mut items: Vec<InputItem> = Vec::new();
 
