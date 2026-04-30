@@ -1,4 +1,4 @@
-import { http, HttpResponse } from 'msw';
+import { HttpResponse, http } from 'msw';
 import { describe, expect, it } from 'vitest';
 import { server } from '../test/server-from-setup';
 import { api } from './client';

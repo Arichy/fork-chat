@@ -8,12 +8,10 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 async fn insert_session(db: &PgPool) -> Session {
-    sqlx::query_as::<_, Session>(
-        "INSERT INTO sessions DEFAULT VALUES RETURNING *",
-    )
-    .fetch_one(db)
-    .await
-    .unwrap()
+    sqlx::query_as::<_, Session>("INSERT INTO sessions DEFAULT VALUES RETURNING *")
+        .fetch_one(db)
+        .await
+        .unwrap()
 }
 
 async fn insert_turn(
@@ -142,15 +140,7 @@ async fn build_input_for_turn_walks_ancestor_chain_in_order() {
     let app = spawn_app().await;
     let session = insert_session(&app.db).await;
 
-    let root = insert_turn(
-        &app.db,
-        session.id,
-        None,
-        Some("q1"),
-        Some("a1"),
-        json!([]),
-    )
-    .await;
+    let root = insert_turn(&app.db, session.id, None, Some("q1"), Some("a1"), json!([])).await;
     // Tiny sleep so created_at differs deterministically.
     tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     let mid = insert_turn(

@@ -39,21 +39,21 @@ pub async fn create_turn(
     .map_err(|e| AppError::DatabaseError(format!("Failed to create turn: {}", e)))
 }
 
-pub async fn update_turn(
-    db: &PgPool,
-    id: Uuid,
-    status: &str,
-    assistant_text: Option<&str>,
-    raw_items: &JsonValue,
-    response_id: Option<&str>,
-    provider: &str,
-    model: &str,
-    input_tokens: Option<i32>,
-    output_tokens: Option<i32>,
-    cached_tokens: Option<i32>,
-    error: Option<&JsonValue>,
-    retry_turn_id: Option<Uuid>,
-) -> Result<Turn> {
+pub struct UpdateTurnParams<'a> {
+    pub status: &'a str,
+    pub assistant_text: Option<&'a str>,
+    pub raw_items: &'a JsonValue,
+    pub response_id: Option<&'a str>,
+    pub provider: &'a str,
+    pub model: &'a str,
+    pub input_tokens: Option<i32>,
+    pub output_tokens: Option<i32>,
+    pub cached_tokens: Option<i32>,
+    pub error: Option<&'a JsonValue>,
+    pub retry_turn_id: Option<Uuid>,
+}
+
+pub async fn update_turn(db: &PgPool, id: Uuid, params: UpdateTurnParams<'_>) -> Result<Turn> {
     sqlx::query_as::<_, Turn>(
         r#"
         UPDATE turns SET
@@ -74,17 +74,17 @@ pub async fn update_turn(
         "#,
     )
     .bind(id)
-    .bind(status)
-    .bind(assistant_text)
-    .bind(raw_items)
-    .bind(response_id)
-    .bind(provider)
-    .bind(model)
-    .bind(input_tokens)
-    .bind(output_tokens)
-    .bind(cached_tokens)
-    .bind(error)
-    .bind(retry_turn_id)
+    .bind(params.status)
+    .bind(params.assistant_text)
+    .bind(params.raw_items)
+    .bind(params.response_id)
+    .bind(params.provider)
+    .bind(params.model)
+    .bind(params.input_tokens)
+    .bind(params.output_tokens)
+    .bind(params.cached_tokens)
+    .bind(params.error)
+    .bind(params.retry_turn_id)
     .fetch_one(db)
     .await
     .map_err(|e| AppError::DatabaseError(format!("Failed to update turn: {}", e)))

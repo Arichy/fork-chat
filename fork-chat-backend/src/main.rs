@@ -31,11 +31,12 @@ async fn main() -> eyre::Result<()> {
     let addr: SocketAddr = config.server_addr.parse()?;
     let state = AppState::new(db, config);
 
-    let app = routes::create_routes(state)
-        .layer(CorsLayer::new()
+    let app = routes::create_routes(state).layer(
+        CorsLayer::new()
             .allow_origin(Any)
             .allow_methods(Any)
-            .allow_headers(Any));
+            .allow_headers(Any),
+    );
 
     tracing::info!("Listening on {}", addr);
 

@@ -34,9 +34,7 @@ describe('MessageView', () => {
 
   it('shows token counts when input_tokens is present', () => {
     render(
-      <MessageView
-        turn={makeTurn({ input_tokens: 15, output_tokens: 42 })}
-      />,
+      <MessageView turn={makeTurn({ input_tokens: 15, output_tokens: 42 })} />,
     );
     expect(screen.getByText(/15 in \/ 42 out/)).toBeInTheDocument();
   });

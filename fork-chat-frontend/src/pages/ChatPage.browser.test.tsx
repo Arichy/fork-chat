@@ -74,9 +74,7 @@ describe('ChatPage', () => {
   it('shows "Session not found" when the tree query errors', async () => {
     turnsApi.tree.mockRejectedValue(new Error('API error: 404'));
     renderPage();
-    expect(
-      await screen.findByText(/session not found/i),
-    ).toBeInTheDocument();
+    expect(await screen.findByText(/session not found/i)).toBeInTheDocument();
   });
 
   it('sends a message and invalidates the tree on success', async () => {

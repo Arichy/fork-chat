@@ -1,8 +1,8 @@
+use async_openai::Client;
 use async_openai::config::OpenAIConfig;
 use async_openai::types::responses::{
     CreateResponse, InputItem, InputParam, OutputItem, OutputMessageContent, Response,
 };
-use async_openai::Client;
 use serde_json::Value as JsonValue;
 use tracing::debug;
 
@@ -67,6 +67,7 @@ impl OpenaiAdapter {
     }
 
     pub fn serialize_output(output: &[OutputItem]) -> Result<JsonValue, AppError> {
-        serde_json::to_value(output).map_err(|e| AppError::Internal(eyre::eyre!("Failed to serialize output: {}", e)))
+        serde_json::to_value(output)
+            .map_err(|e| AppError::Internal(eyre::eyre!("Failed to serialize output: {}", e)))
     }
 }

@@ -44,6 +44,7 @@ function TurnNode({ id, data }: NodeProps<TurnNodeType>) {
   const contentRef = useRef<HTMLDivElement>(null);
   const [overflowing, setOverflowing] = useState(false);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Re-measure overflow only when rendered message content changes.
   useLayoutEffect(() => {
     const el = contentRef.current;
     if (el) {
@@ -185,6 +186,7 @@ export function ChatTree({
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Preserve existing behavior: React Flow node/edge state is resynced only when tree data changes.
   useEffect(() => {
     setNodes((prev) => {
       const nodeHash = keyBy(prev, (node) => node.id);
@@ -202,6 +204,7 @@ export function ChatTree({
   const nodesInitialized = useNodesInitialized();
 
   const { getNodes, getEdges, fitView } = useReactFlow<TurnNodeType>();
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Layout intentionally runs when React Flow reports measured nodes initialized; React Flow methods are stable for this effect.
   useEffect(() => {
     if (!nodesInitialized) {
       return;

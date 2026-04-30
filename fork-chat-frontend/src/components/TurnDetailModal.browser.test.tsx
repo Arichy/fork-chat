@@ -12,7 +12,9 @@ vi.mock('../api', () => ({
   api: {
     config: {
       get: vi.fn().mockResolvedValue({
-        models: [{ id: 'gpt-4o-mini', name: 'GPT-4o Mini', provider: 'openai' }],
+        models: [
+          { id: 'gpt-4o-mini', name: 'GPT-4o Mini', provider: 'openai' },
+        ],
       }),
     },
   },
@@ -103,9 +105,11 @@ describe('TurnDetailModal', () => {
     // Simulate the parent mutation clearing `turn` while the modal closes.
     rerender(
       <QueryClientProvider
-        client={new QueryClient({
-          defaultOptions: { queries: { retry: false } },
-        })}
+        client={
+          new QueryClient({
+            defaultOptions: { queries: { retry: false } },
+          })
+        }
       >
         <TurnDetailModal
           turn={null}

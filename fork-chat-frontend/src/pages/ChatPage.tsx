@@ -69,6 +69,7 @@ export function ChatPage() {
     ? (turns.find((t) => t.id === modalTurnId) ?? null)
     : null;
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: sessionId is the reset trigger; its value is not needed inside the effect body.
   useEffect(() => {
     setSelectedTurn(null);
     setModalTurnId(null);

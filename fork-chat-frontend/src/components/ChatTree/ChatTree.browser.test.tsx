@@ -1,5 +1,5 @@
-import { ReactFlowProvider } from '@xyflow/react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { ReactFlowProvider } from '@xyflow/react';
 import { describe, expect, it, vi } from 'vitest';
 import { makeTurn } from '../../test/fixtures';
 import { ChatTree } from './ChatTree';
@@ -17,18 +17,18 @@ describe('ChatTree', () => {
   it('shows "No messages yet" when turns is empty', () => {
     render(
       <SizedContainer>
-        <ChatTree
-          turns={[]}
-          selectedTurnId={null}
-          onSelectTurn={vi.fn()}
-        />
+        <ChatTree turns={[]} selectedTurnId={null} onSelectTurn={vi.fn()} />
       </SizedContainer>,
     );
     expect(screen.getByText(/no messages yet/i)).toBeInTheDocument();
   });
 
   it('renders one node per turn', async () => {
-    const root = makeTurn({ id: 'r', user_text: 'hello', parent_turn_id: null });
+    const root = makeTurn({
+      id: 'r',
+      user_text: 'hello',
+      parent_turn_id: null,
+    });
     const child = makeTurn({
       id: 'c',
       user_text: 'follow-up',
@@ -141,7 +141,11 @@ describe('ChatTree', () => {
   });
 
   it('positions nodes after layout runs (x/y differ per node)', async () => {
-    const root = makeTurn({ id: 'p', user_text: 'parent', parent_turn_id: null });
+    const root = makeTurn({
+      id: 'p',
+      user_text: 'parent',
+      parent_turn_id: null,
+    });
     const a = makeTurn({ id: 'a', user_text: 'a', parent_turn_id: 'p' });
     const b = makeTurn({ id: 'b', user_text: 'b', parent_turn_id: 'p' });
 
@@ -174,11 +178,7 @@ describe('ChatTree', () => {
     const root = makeTurn({ id: 'only', user_text: 'original' });
     const { rerender } = render(
       <SizedContainer>
-        <ChatTree
-          turns={[root]}
-          selectedTurnId={null}
-          onSelectTurn={vi.fn()}
-        />
+        <ChatTree turns={[root]} selectedTurnId={null} onSelectTurn={vi.fn()} />
       </SizedContainer>,
     );
     await screen.findByText('original');

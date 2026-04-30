@@ -1,4 +1,4 @@
-import { http, HttpResponse } from 'msw';
+import { HttpResponse, http } from 'msw';
 import type {
   ConfigResponse,
   CreateSessionResponse,
@@ -68,16 +68,13 @@ export const handlers = [
     return HttpResponse.json(resp);
   }),
 
-  http.post(
-    `${API_BASE}/sessions/:id/turns/:turnId/retry`,
-    ({ params }) => {
-      const turn: Turn = makeTurn({
-        session_id: String(params.id),
-        status: 'completed',
-      });
-      return HttpResponse.json({ turn } satisfies CreateTurnResponse);
-    },
-  ),
+  http.post(`${API_BASE}/sessions/:id/turns/:turnId/retry`, ({ params }) => {
+    const turn: Turn = makeTurn({
+      session_id: String(params.id),
+      status: 'completed',
+    });
+    return HttpResponse.json({ turn } satisfies CreateTurnResponse);
+  }),
 
   http.get(`${API_BASE}/sessions/:id/tree`, ({ params }) => {
     const body: TreeResponse = {

@@ -1,6 +1,6 @@
+use axum::Json;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::Json;
 use serde_json::json;
 
 pub type Result<T> = std::result::Result<T, AppError>;
@@ -43,7 +43,10 @@ impl IntoResponse for AppError {
             AppError::UnsupportedProvider(_) => (StatusCode::BAD_REQUEST, self.to_string()),
             AppError::LlmApiError(_) => (StatusCode::BAD_GATEWAY, self.to_string()),
             AppError::DatabaseError(_) => (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()),
-            AppError::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error".into()),
+            AppError::Internal(_) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Internal server error".into(),
+            ),
         };
 
         (status, Json(json!({ "error": message }))).into_response()

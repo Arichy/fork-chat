@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, type RenderOptions } from '@testing-library/react';
+import { type RenderOptions, render } from '@testing-library/react';
 import type { ReactElement, ReactNode } from 'react';
 
 export function createTestQueryClient(): QueryClient {
@@ -23,10 +23,7 @@ function ProviderWrapper({ children, client }: ProviderWrapperProps) {
 
 export function renderWithProviders(
   ui: ReactElement,
-  {
-    client,
-    ...options
-  }: RenderOptions & { client?: QueryClient } = {},
+  { client, ...options }: RenderOptions & { client?: QueryClient } = {},
 ) {
   const qc = client ?? createTestQueryClient();
   return {

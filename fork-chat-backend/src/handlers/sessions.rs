@@ -1,13 +1,13 @@
 use axum::{
-    extract::{Path, State},
     Json,
+    extract::{Path, State},
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::config::AppState;
-use crate::db::{create_session, delete_session, get_session, list_sessions};
 use crate::db::sessions::update_session_title;
+use crate::db::{create_session, delete_session, get_session, list_sessions};
 use crate::error::AppError;
 use crate::models::Session;
 

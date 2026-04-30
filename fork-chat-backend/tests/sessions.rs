@@ -116,7 +116,10 @@ async fn patch_session_updates_title_and_bumps_updated_at() {
         .json()
         .await
         .unwrap();
-    let before_updated = before["session"]["updated_at"].as_str().unwrap().to_string();
+    let before_updated = before["session"]["updated_at"]
+        .as_str()
+        .unwrap()
+        .to_string();
     tokio::time::sleep(std::time::Duration::from_millis(5)).await;
 
     let resp = app
@@ -189,12 +192,11 @@ async fn delete_session_cascades_to_turns() {
         .unwrap();
     assert!(turn_resp.status().is_success());
 
-    let count: (i64,) =
-        sqlx::query_as("SELECT COUNT(*) FROM turns WHERE session_id = $1")
-            .bind(id)
-            .fetch_one(&app.db)
-            .await
-            .unwrap();
+    let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM turns WHERE session_id = $1")
+        .bind(id)
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
     assert_eq!(count.0, 1);
 
     let del = app
@@ -205,12 +207,11 @@ async fn delete_session_cascades_to_turns() {
         .unwrap();
     assert!(del.status().is_success());
 
-    let count_after: (i64,) =
-        sqlx::query_as("SELECT COUNT(*) FROM turns WHERE session_id = $1")
-            .bind(id)
-            .fetch_one(&app.db)
-            .await
-            .unwrap();
+    let count_after: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM turns WHERE session_id = $1")
+        .bind(id)
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
     assert_eq!(count_after.0, 0, "ON DELETE CASCADE should wipe turns");
 
     app.cleanup().await;

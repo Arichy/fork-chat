@@ -9,8 +9,8 @@ use uuid::Uuid;
 use crate::config::AppState;
 use crate::db::sessions::update_session_title;
 use crate::db::{
-    create_turn, get_session, get_session_tree, get_turn_in_session, session_has_root_turn,
-    update_turn,
+    UpdateTurnParams, create_turn, get_session, get_session_tree, get_turn_in_session,
+    session_has_root_turn, update_turn,
 };
 use crate::error::AppError;
 use crate::models::Turn;
@@ -109,17 +109,19 @@ pub async fn create_turn_handler(
             let turn = update_turn(
                 &state.db,
                 turn.id,
-                "completed",
-                assistant_text.as_deref(),
-                &raw_items,
-                response_id,
-                &req.provider,
-                &req.model,
-                input_tokens,
-                output_tokens,
-                None,
-                None,
-                None,
+                UpdateTurnParams {
+                    status: "completed",
+                    assistant_text: assistant_text.as_deref(),
+                    raw_items: &raw_items,
+                    response_id,
+                    provider: &req.provider,
+                    model: &req.model,
+                    input_tokens,
+                    output_tokens,
+                    cached_tokens: None,
+                    error: None,
+                    retry_turn_id: None,
+                },
             )
             .await?;
 
@@ -137,20 +139,23 @@ pub async fn create_turn_handler(
         Err(e) => {
             error!("API call failed: {}", e);
             let error_json = serde_json::json!({ "message": e.to_string() });
+            let raw_items = serde_json::json!([]);
             let _ = update_turn(
                 &state.db,
                 turn.id,
-                "failed",
-                None,
-                &serde_json::json!([]),
-                None,
-                &req.provider,
-                &req.model,
-                None,
-                None,
-                None,
-                Some(&error_json),
-                None,
+                UpdateTurnParams {
+                    status: "failed",
+                    assistant_text: None,
+                    raw_items: &raw_items,
+                    response_id: None,
+                    provider: &req.provider,
+                    model: &req.model,
+                    input_tokens: None,
+                    output_tokens: None,
+                    cached_tokens: None,
+                    error: Some(&error_json),
+                    retry_turn_id: None,
+                },
             )
             .await;
             Err(e)
@@ -230,17 +235,19 @@ pub async fn retry_turn_handler(
             let new_turn = update_turn(
                 &state.db,
                 new_turn.id,
-                "completed",
-                assistant_text.as_deref(),
-                &raw_items,
-                response_id,
-                &req.provider,
-                &req.model,
-                input_tokens,
-                output_tokens,
-                None,
-                None,
-                None,
+                UpdateTurnParams {
+                    status: "completed",
+                    assistant_text: assistant_text.as_deref(),
+                    raw_items: &raw_items,
+                    response_id,
+                    provider: &req.provider,
+                    model: &req.model,
+                    input_tokens,
+                    output_tokens,
+                    cached_tokens: None,
+                    error: None,
+                    retry_turn_id: None,
+                },
             )
             .await?;
 
@@ -248,17 +255,19 @@ pub async fn retry_turn_handler(
             update_turn(
                 &state.db,
                 old_turn_id,
-                old_turn.status.as_str(),
-                old_turn.assistant_text.as_deref(),
-                &old_turn.raw_items,
-                old_turn.response_id.as_deref(),
-                old_turn.provider.as_deref().unwrap_or(""),
-                old_turn.model.as_deref().unwrap_or(""),
-                old_turn.input_tokens,
-                old_turn.output_tokens,
-                old_turn.cached_tokens,
-                old_turn.error.as_ref(),
-                Some(new_turn.id),
+                UpdateTurnParams {
+                    status: old_turn.status.as_str(),
+                    assistant_text: old_turn.assistant_text.as_deref(),
+                    raw_items: &old_turn.raw_items,
+                    response_id: old_turn.response_id.as_deref(),
+                    provider: old_turn.provider.as_deref().unwrap_or(""),
+                    model: old_turn.model.as_deref().unwrap_or(""),
+                    input_tokens: old_turn.input_tokens,
+                    output_tokens: old_turn.output_tokens,
+                    cached_tokens: old_turn.cached_tokens,
+                    error: old_turn.error.as_ref(),
+                    retry_turn_id: Some(new_turn.id),
+                },
             )
             .await?;
 
@@ -267,20 +276,23 @@ pub async fn retry_turn_handler(
         Err(e) => {
             error!("Retry API call failed: {}", e);
             let error_json = serde_json::json!({ "message": e.to_string() });
+            let raw_items = serde_json::json!([]);
             let new_turn = update_turn(
                 &state.db,
                 new_turn.id,
-                "failed",
-                None,
-                &serde_json::json!([]),
-                None,
-                &req.provider,
-                &req.model,
-                None,
-                None,
-                None,
-                Some(&error_json),
-                None,
+                UpdateTurnParams {
+                    status: "failed",
+                    assistant_text: None,
+                    raw_items: &raw_items,
+                    response_id: None,
+                    provider: &req.provider,
+                    model: &req.model,
+                    input_tokens: None,
+                    output_tokens: None,
+                    cached_tokens: None,
+                    error: Some(&error_json),
+                    retry_turn_id: None,
+                },
             )
             .await?;
 
@@ -288,17 +300,19 @@ pub async fn retry_turn_handler(
             update_turn(
                 &state.db,
                 old_turn_id,
-                old_turn.status.as_str(),
-                old_turn.assistant_text.as_deref(),
-                &old_turn.raw_items,
-                old_turn.response_id.as_deref(),
-                old_turn.provider.as_deref().unwrap_or(""),
-                old_turn.model.as_deref().unwrap_or(""),
-                old_turn.input_tokens,
-                old_turn.output_tokens,
-                old_turn.cached_tokens,
-                old_turn.error.as_ref(),
-                Some(new_turn.id),
+                UpdateTurnParams {
+                    status: old_turn.status.as_str(),
+                    assistant_text: old_turn.assistant_text.as_deref(),
+                    raw_items: &old_turn.raw_items,
+                    response_id: old_turn.response_id.as_deref(),
+                    provider: old_turn.provider.as_deref().unwrap_or(""),
+                    model: old_turn.model.as_deref().unwrap_or(""),
+                    input_tokens: old_turn.input_tokens,
+                    output_tokens: old_turn.output_tokens,
+                    cached_tokens: old_turn.cached_tokens,
+                    error: old_turn.error.as_ref(),
+                    retry_turn_id: Some(new_turn.id),
+                },
             )
             .await?;
 

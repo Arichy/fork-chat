@@ -46,8 +46,7 @@ impl Config {
             openai_api_key: env::var("OPENAI_API_KEY")
                 .map_err(|_| eyre::eyre!("OPENAI_API_KEY not set"))?,
             openai_base_url: env::var("OPENAI_BASE_URL").ok(),
-            server_addr: env::var("SERVER_ADDR")
-                .unwrap_or_else(|_| "0.0.0.0:3000".to_string()),
+            server_addr: env::var("SERVER_ADDR").unwrap_or_else(|_| "0.0.0.0:3000".to_string()),
             models,
         })
     }
