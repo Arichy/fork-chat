@@ -2,7 +2,7 @@ import { RefreshCw } from 'lucide-react';
 import { useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import type { Turn } from '../api/types';
+import type { Protocol, Turn } from '../api/types';
 import { MessageInput } from './MessageInput';
 import { Button } from './ui/button';
 import {
@@ -15,15 +15,22 @@ import {
 
 interface TurnDetailModalProps {
   turn: Turn | null;
+  protocol: Protocol;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onSend: (text: string, model: string, parentId: string | null) => void;
-  onRetry: (turnId: string, model: string) => void;
+  onSend: (
+    text: string,
+    provider: string,
+    model: string,
+    parentId: string | null,
+  ) => void;
+  onRetry: (turnId: string, provider: string, model: string) => void;
   isSending: boolean;
 }
 
 export function TurnDetailModal({
   turn,
+  protocol,
   open,
   onOpenChange,
   onSend,
@@ -114,7 +121,11 @@ export function TurnDetailModal({
                 className="w-full"
                 disabled={isSending}
                 onClick={() => {
-                  onRetry(displayTurn.id, displayTurn.model ?? '');
+                  onRetry(
+                    displayTurn.id,
+                    displayTurn.provider ?? '',
+                    displayTurn.model ?? '',
+                  );
                 }}
               >
                 <RefreshCw className="size-4 mr-1" />
@@ -124,7 +135,9 @@ export function TurnDetailModal({
           )}
           {displayTurn.status !== 'failed' && (
             <MessageInput
+              key={displayTurn.id}
               parentTurn={displayTurn}
+              protocol={protocol}
               onSend={onSend}
               disabled={isSending}
             />

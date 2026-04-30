@@ -25,7 +25,7 @@ pub async fn create_turn(
 ) -> Result<Turn> {
     sqlx::query_as::<_, Turn>(
         r#"
-        INSERT INTO turns (session_id, parent_turn_id, status, user_text, raw_items)
+        INSERT INTO turns (session_id, parent_turn_id, status, user_text, turn_messages)
         VALUES ($1, $2, $3, $4, '[]'::jsonb)
         RETURNING *
         "#,
@@ -42,7 +42,7 @@ pub async fn create_turn(
 pub struct UpdateTurnParams<'a> {
     pub status: &'a str,
     pub assistant_text: Option<&'a str>,
-    pub raw_items: &'a JsonValue,
+    pub turn_messages: &'a JsonValue,
     pub response_id: Option<&'a str>,
     pub provider: &'a str,
     pub model: &'a str,
@@ -59,7 +59,7 @@ pub async fn update_turn(db: &PgPool, id: Uuid, params: UpdateTurnParams<'_>) ->
         UPDATE turns SET
             status = $2,
             assistant_text = $3,
-            raw_items = $4,
+            turn_messages = $4,
             response_id = $5,
             provider = $6,
             model = $7,
@@ -76,7 +76,7 @@ pub async fn update_turn(db: &PgPool, id: Uuid, params: UpdateTurnParams<'_>) ->
     .bind(id)
     .bind(params.status)
     .bind(params.assistant_text)
-    .bind(params.raw_items)
+    .bind(params.turn_messages)
     .bind(params.response_id)
     .bind(params.provider)
     .bind(params.model)

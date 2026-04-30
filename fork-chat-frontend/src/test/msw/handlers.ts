@@ -15,9 +15,21 @@ const API_BASE = 'http://localhost:3000/api';
 export const handlers = [
   http.get(`${API_BASE}/config`, () => {
     const body: ConfigResponse = {
-      models: [
-        { id: 'gpt-4o-mini', name: 'GPT-4o Mini', provider: 'openai' },
-        { id: 'gpt-4o', name: 'GPT-4o', provider: 'openai' },
+      protocols: ['openai', 'anthropic'],
+      providers: [
+        {
+          name: 'openai',
+          supported_protocols: ['openai'],
+          models: [
+            { id: 'gpt-5.4-mini', name: 'GPT-5.4 Mini' },
+            { id: 'gpt-5.5', name: 'GPT-5.5' },
+          ],
+        },
+        {
+          name: 'anthropic',
+          supported_protocols: ['anthropic'],
+          models: [{ id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6' }],
+        },
       ],
     };
     return HttpResponse.json(body);
@@ -53,6 +65,7 @@ export const handlers = [
   http.post(`${API_BASE}/sessions/:id/turns`, async ({ request, params }) => {
     const body = (await request.json()) as {
       user_text: string;
+      provider: string;
       model: string;
       parent_turn_id?: string;
     };
@@ -60,6 +73,7 @@ export const handlers = [
       session_id: String(params.id),
       user_text: body.user_text,
       assistant_text: 'Hi there!',
+      provider: body.provider,
       model: body.model,
       parent_turn_id: body.parent_turn_id ?? null,
       status: 'completed',

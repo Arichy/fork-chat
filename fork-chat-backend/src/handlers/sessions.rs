@@ -5,7 +5,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::config::AppState;
+use crate::config::{AppState, Protocol};
 use crate::db::sessions::update_session_title;
 use crate::db::{create_session, delete_session, get_session, list_sessions};
 use crate::error::AppError;
@@ -13,6 +13,7 @@ use crate::models::Session;
 
 #[derive(Debug, Deserialize)]
 pub struct CreateSessionRequest {
+    pub protocol: Protocol,
     pub system_prompt: Option<String>,
 }
 
@@ -30,7 +31,7 @@ pub async fn create_session_handler(
     State(state): State<AppState>,
     Json(req): Json<CreateSessionRequest>,
 ) -> Result<Json<CreateSessionResponse>, AppError> {
-    let session = create_session(&state.db, req.system_prompt.as_deref()).await?;
+    let session = create_session(&state.db, req.protocol, req.system_prompt.as_deref()).await?;
     Ok(Json(CreateSessionResponse { session }))
 }
 

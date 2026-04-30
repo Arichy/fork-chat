@@ -12,7 +12,7 @@ pub struct Turn {
     pub status: String,
     pub user_text: Option<String>,
     pub assistant_text: Option<String>,
-    pub raw_items: JsonValue,
+    pub turn_messages: JsonValue,
     /// OpenAI Responses API response.id for conversation continuity
     pub response_id: Option<String>,
     pub provider: Option<String>,

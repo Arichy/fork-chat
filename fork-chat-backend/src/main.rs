@@ -2,8 +2,8 @@ mod config;
 mod db;
 mod error;
 mod handlers;
+mod llm;
 mod models;
-mod openai;
 mod routes;
 
 use std::net::SocketAddr;
@@ -22,7 +22,7 @@ async fn main() -> eyre::Result<()> {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    let config = config::Config::from_env()?;
+    let config = config::Config::load()?;
     tracing::info!("Loaded configuration");
 
     let db = db::create_pool(&config.database_url).await?;

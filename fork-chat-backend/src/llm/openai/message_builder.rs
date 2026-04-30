@@ -1,24 +1,21 @@
+//! Reconstructs an OpenAI Responses `Vec<InputItem>` from the stored turn
+//! history. Falls back to user/assistant text pairs when a turn has no
+//! `turn_messages` (e.g. legacy rows created before raw-item persistence landed).
+
 use async_openai::types::responses::{EasyInputContent, EasyInputMessage, InputItem, Item, Role};
-use sqlx::PgPool;
+use serde_json::Value as JsonValue;
 
-use crate::error::Result;
-use crate::models::{Session, Turn};
+use crate::models::Turn;
 
-pub async fn build_input_for_turn(
-    db: &PgPool,
-    session: &Session,
-    parent_turn_id: Option<uuid::Uuid>,
-    new_user_content: &str,
-) -> Result<Vec<InputItem>> {
-    let turns = crate::db::get_path_to_turn_in_session(db, session.id, parent_turn_id).await?;
-
+/// Build the full input for a Responses-API call, given the ordered turn path
+/// (root → parent) and the new user message to append.
+pub fn build_input_items(history: &[Turn], new_user_content: &str) -> Vec<InputItem> {
     let mut items: Vec<InputItem> = Vec::new();
 
-    for turn in &turns {
+    for turn in history {
         let turn_items = parse_turn_items(turn);
         if turn_items.is_empty() {
-            let fallback = build_fallback_items(turn);
-            items.extend(fallback);
+            items.extend(build_fallback_items(turn));
         } else {
             items.extend(turn_items);
         }
@@ -30,11 +27,11 @@ pub async fn build_input_for_turn(
         ..Default::default()
     }));
 
-    Ok(items)
+    items
 }
 
 fn parse_turn_items(turn: &Turn) -> Vec<InputItem> {
-    let Some(arr) = turn.raw_items.as_array() else {
+    let Some(arr) = turn.turn_messages.as_array() else {
         return Vec::new();
     };
 
@@ -42,8 +39,38 @@ fn parse_turn_items(turn: &Turn) -> Vec<InputItem> {
         return Vec::new();
     }
 
-    let mut items = Vec::new();
+    // New format: [{ role, content, ...meta }] where `content` is an array of
+    // protocol-native OpenAI items/messages for replay.
+    if let Some(items) = parse_transcript_messages(arr)
+        && !items.is_empty()
+    {
+        return items;
+    }
 
+    parse_legacy_items(arr)
+}
+
+fn parse_transcript_messages(arr: &[JsonValue]) -> Option<Vec<InputItem>> {
+    let mut items = Vec::new();
+    let mut matched = false;
+
+    for entry in arr {
+        // Distinguish from legacy OpenAI output items (`type` is present there).
+        if entry.get("type").is_some() {
+            continue;
+        }
+        let Some(content_arr) = entry.get("content").and_then(|v| v.as_array()) else {
+            continue;
+        };
+        matched = true;
+        items.extend(parse_legacy_items(content_arr));
+    }
+
+    if matched { Some(items) } else { None }
+}
+
+fn parse_legacy_items(arr: &[JsonValue]) -> Vec<InputItem> {
+    let mut items = Vec::new();
     for value in arr {
         if let Ok(item) = serde_json::from_value::<Item>(value.clone()) {
             items.push(InputItem::Item(item));
@@ -54,7 +81,6 @@ fn parse_turn_items(turn: &Turn) -> Vec<InputItem> {
             items.push(InputItem::EasyMessage(easy_msg));
         }
     }
-
     items
 }
 
@@ -78,8 +104,4 @@ fn build_fallback_items(turn: &Turn) -> Vec<InputItem> {
     }
 
     items
-}
-
-pub fn get_instructions(session: &Session) -> Option<&str> {
-    session.system_prompt.as_deref()
 }

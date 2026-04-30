@@ -1,0 +1,49 @@
+{
+  "database_url": "postgres://postgres:password@localhost/fork-chat",
+  "server_addr": "0.0.0.0:3000",
+  "providers": [
+    {
+      "name": "openai",
+      "models": [
+        { "id": "gpt-5.4-mini" },
+        { "id": "gpt-5.5" }
+      ],
+      "protocols": {
+        "openai": {
+          "base_url": "https://api.openai.com/v1",
+          "api_key": "sk-your-key-here"
+        }
+      }
+    },
+    {
+      "name": "anthropic",
+      "models": [
+        { "id": "claude-sonnet-4-6" },
+        { "id": "claude-opus-4-7" }
+      ],
+      "protocols": {
+        "anthropic": {
+          "base_url": "https://api.anthropic.com",
+          "api_key": "sk-ant-your-key-here"
+        }
+      }
+    },
+    {
+      "name": "deepseek",
+      "models": [
+        { "id": "deepseek-v4-pro[1m]" },
+        { "id": "deepseek-v4-flash" }
+      ],
+      "protocols": {
+        "openai": {
+          "base_url": "https://api.deepseek.com",
+          "api_key": "ds-your-key-here"
+        },
+        "anthropic": {
+          "base_url": "https://api.deepseek.com/anthropic",
+          "api_key": "ds-your-key-here"
+        }
+      }
+    }
+  ]
+}

@@ -3,18 +3,19 @@ use axum::{
     extract::{Path, State},
 };
 use serde::{Deserialize, Serialize};
+use serde_json::{Value as JsonValue, json};
 use tracing::{error, info};
 use uuid::Uuid;
 
-use crate::config::AppState;
+use crate::config::{AppState, Protocol};
 use crate::db::sessions::update_session_title;
 use crate::db::{
-    UpdateTurnParams, create_turn, get_session, get_session_tree, get_turn_in_session,
-    session_has_root_turn, update_turn,
+    UpdateTurnParams, create_turn, get_path_to_turn_in_session, get_session, get_session_tree,
+    get_turn_in_session, session_has_root_turn, update_turn,
 };
 use crate::error::AppError;
+use crate::llm::SendResult;
 use crate::models::Turn;
-use crate::openai::{OpenaiAdapter, build_input_for_turn, get_instructions};
 
 #[derive(Debug, Deserialize)]
 pub struct CreateTurnRequest {
@@ -39,21 +40,81 @@ pub struct TreeResponse {
     pub turns: Vec<Turn>,
 }
 
+/// Validate that (session.protocol, provider, model) form a valid combination
+/// according to the current config. Returns the resolved protocol on success.
+fn validate_dispatch(
+    state: &AppState,
+    protocol: Protocol,
+    provider_name: &str,
+    model: &str,
+) -> Result<Protocol, AppError> {
+    let provider = state
+        .config
+        .provider(provider_name)
+        .ok_or_else(|| AppError::BadRequest(format!("unknown provider '{provider_name}'")))?;
+
+    if provider.binding(protocol).is_none() {
+        return Err(AppError::BadRequest(format!(
+            "provider '{}' is not configured for protocol '{}'",
+            provider_name,
+            protocol.as_str()
+        )));
+    }
+
+    if !provider.has_model(model) {
+        return Err(AppError::BadRequest(format!(
+            "model '{}' is not exposed by provider '{}'",
+            model, provider_name
+        )));
+    }
+
+    Ok(protocol)
+}
+
+fn user_message_content(protocol: Protocol, user_text: &str) -> JsonValue {
+    match protocol {
+        Protocol::Openai => json!([{ "role": "user", "content": user_text }]),
+        Protocol::Anthropic => json!([{ "type": "text", "text": user_text }]),
+    }
+}
+
+fn build_turn_messages(protocol: Protocol, user_text: &str, send: &SendResult) -> JsonValue {
+    json!([
+        {
+            "role": "user",
+            "content": user_message_content(protocol, user_text),
+        },
+        {
+            "role": "assistant",
+            "content": send.assistant_content.clone(),
+            "response_id": send.response_id.clone(),
+            "stop_reason": send.stop_reason.clone(),
+            "usage": send.usage.clone(),
+            "raw_response": send.raw_response.clone(),
+        }
+    ])
+}
+
+fn build_failed_turn_messages(protocol: Protocol, user_text: &str) -> JsonValue {
+    json!([
+        {
+            "role": "user",
+            "content": user_message_content(protocol, user_text),
+        }
+    ])
+}
+
 pub async fn create_turn_handler(
     State(state): State<AppState>,
     Path(session_id): Path<Uuid>,
     Json(req): Json<CreateTurnRequest>,
 ) -> Result<Json<CreateTurnResponse>, AppError> {
     info!(
-        "Creating turn for session {}, model: {}",
-        session_id, req.model
+        "Creating turn for session {}, provider: {}, model: {}",
+        session_id, req.provider, req.model
     );
 
-    if req.provider != "openai" {
-        return Err(AppError::UnsupportedProvider(req.provider));
-    }
-
-    // Check for single root node constraint
+    // Check for single root node constraint.
     if req.parent_turn_id.is_none() {
         let has_root = session_has_root_turn(&state.db, session_id).await?;
         if has_root {
@@ -63,7 +124,7 @@ pub async fn create_turn_handler(
         }
     }
 
-    // Disallow creating children of failed turns
+    // Disallow creating children of failed turns.
     if let Some(parent_id) = req.parent_turn_id {
         let parent = get_turn_in_session(&state.db, session_id, parent_id).await?;
         if parent.status == "failed" {
@@ -75,6 +136,15 @@ pub async fn create_turn_handler(
 
     let session = get_session(&state.db, session_id).await?;
 
+    let protocol = validate_dispatch(&state, session.protocol, &req.provider, &req.model)?;
+    let adapter = state.registry.get(protocol, &req.provider).ok_or_else(|| {
+        AppError::Internal(eyre::eyre!(
+            "registry missing adapter for ({}, {})",
+            protocol.as_str(),
+            req.provider
+        ))
+    })?;
+
     let turn = create_turn(
         &state.db,
         session_id,
@@ -84,41 +154,40 @@ pub async fn create_turn_handler(
     )
     .await?;
 
-    let input =
-        build_input_for_turn(&state.db, &session, req.parent_turn_id, &req.user_text).await?;
+    let history = get_path_to_turn_in_session(&state.db, session_id, req.parent_turn_id).await?;
+    let instructions = session.system_prompt.as_deref();
 
-    let instructions = get_instructions(&session);
+    info!(
+        "Calling {} adapter with model {}",
+        protocol.as_str(),
+        req.model
+    );
 
-    info!("Calling Responses API with model {}", req.model);
-
-    let adapter = OpenaiAdapter::new(state.openai_client.clone());
-    let result = adapter.send(input, &req.model, instructions).await;
+    let result = adapter
+        .send(&history, &req.user_text, &req.model, instructions)
+        .await;
 
     match result {
-        Ok(response) => {
+        Ok(send) => {
             info!(
-                "API call successful, response_id: {}, tokens: {:?}",
-                response.id, response.usage
+                "API call successful, response_id: {:?}, tokens: ({:?}, {:?})",
+                send.response_id, send.input_tokens, send.output_tokens
             );
-
-            let assistant_text = OpenaiAdapter::extract_assistant_text(&response);
-            let (input_tokens, output_tokens) = OpenaiAdapter::extract_usage(&response);
-            let raw_items = OpenaiAdapter::serialize_output(&response.output)?;
-            let response_id = Some(response.id.as_str());
+            let turn_messages = build_turn_messages(protocol, &req.user_text, &send);
 
             let turn = update_turn(
                 &state.db,
                 turn.id,
                 UpdateTurnParams {
                     status: "completed",
-                    assistant_text: assistant_text.as_deref(),
-                    raw_items: &raw_items,
-                    response_id,
+                    assistant_text: send.assistant_text.as_deref(),
+                    turn_messages: &turn_messages,
+                    response_id: send.response_id.as_deref(),
                     provider: &req.provider,
                     model: &req.model,
-                    input_tokens,
-                    output_tokens,
-                    cached_tokens: None,
+                    input_tokens: send.input_tokens,
+                    output_tokens: send.output_tokens,
+                    cached_tokens: send.cached_tokens,
                     error: None,
                     retry_turn_id: None,
                 },
@@ -139,14 +208,14 @@ pub async fn create_turn_handler(
         Err(e) => {
             error!("API call failed: {}", e);
             let error_json = serde_json::json!({ "message": e.to_string() });
-            let raw_items = serde_json::json!([]);
+            let turn_messages = build_failed_turn_messages(protocol, &req.user_text);
             let _ = update_turn(
                 &state.db,
                 turn.id,
                 UpdateTurnParams {
                     status: "failed",
                     assistant_text: None,
-                    raw_items: &raw_items,
+                    turn_messages: &turn_messages,
                     response_id: None,
                     provider: &req.provider,
                     model: &req.model,
@@ -175,7 +244,7 @@ pub async fn get_session_tree_handler(
     State(state): State<AppState>,
     Path(session_id): Path<Uuid>,
 ) -> Result<Json<TreeResponse>, AppError> {
-    // Ensure session exists, returns 404 if not
+    // Ensure session exists, returns 404 if not.
     get_session(&state.db, session_id).await?;
     let turns = get_session_tree(&state.db, session_id).await?;
     Ok(Json(TreeResponse { turns }))
@@ -194,16 +263,21 @@ pub async fn retry_turn_handler(
 ) -> Result<Json<CreateTurnResponse>, AppError> {
     info!("Retrying turn {} in session {}", old_turn_id, session_id);
 
-    if req.provider != "openai" {
-        return Err(AppError::UnsupportedProvider(req.provider));
-    }
-
     let session = get_session(&state.db, session_id).await?;
     let old_turn = get_turn_in_session(&state.db, session_id, old_turn_id).await?;
 
+    let protocol = validate_dispatch(&state, session.protocol, &req.provider, &req.model)?;
+    let adapter = state.registry.get(protocol, &req.provider).ok_or_else(|| {
+        AppError::Internal(eyre::eyre!(
+            "registry missing adapter for ({}, {})",
+            protocol.as_str(),
+            req.provider
+        ))
+    })?;
+
     let user_text = old_turn.user_text.clone().unwrap_or_default();
 
-    // Create a new turn as the retry (same parent, same user_text)
+    // Create a new turn as the retry (same parent, same user_text).
     let new_turn = create_turn(
         &state.db,
         session_id,
@@ -213,52 +287,55 @@ pub async fn retry_turn_handler(
     )
     .await?;
 
-    let input =
-        build_input_for_turn(&state.db, &session, old_turn.parent_turn_id, &user_text).await?;
+    let history =
+        get_path_to_turn_in_session(&state.db, session_id, old_turn.parent_turn_id).await?;
+    let instructions = session.system_prompt.as_deref();
 
-    let instructions = get_instructions(&session);
+    info!(
+        "Calling {} adapter for retry with model {}",
+        protocol.as_str(),
+        req.model
+    );
 
-    info!("Calling Responses API for retry with model {}", req.model);
-
-    let adapter = OpenaiAdapter::new(state.openai_client.clone());
-    let result = adapter.send(input, &req.model, instructions).await;
+    let result = adapter
+        .send(&history, &user_text, &req.model, instructions)
+        .await;
 
     match result {
-        Ok(response) => {
-            info!("Retry API call successful, response_id: {}", response.id);
-
-            let assistant_text = OpenaiAdapter::extract_assistant_text(&response);
-            let (input_tokens, output_tokens) = OpenaiAdapter::extract_usage(&response);
-            let raw_items = OpenaiAdapter::serialize_output(&response.output)?;
-            let response_id = Some(response.id.as_str());
+        Ok(send) => {
+            info!(
+                "Retry API call successful, response_id: {:?}",
+                send.response_id
+            );
+            let turn_messages = build_turn_messages(protocol, &user_text, &send);
 
             let new_turn = update_turn(
                 &state.db,
                 new_turn.id,
                 UpdateTurnParams {
                     status: "completed",
-                    assistant_text: assistant_text.as_deref(),
-                    raw_items: &raw_items,
-                    response_id,
+                    assistant_text: send.assistant_text.as_deref(),
+                    turn_messages: &turn_messages,
+                    response_id: send.response_id.as_deref(),
                     provider: &req.provider,
                     model: &req.model,
-                    input_tokens,
-                    output_tokens,
-                    cached_tokens: None,
+                    input_tokens: send.input_tokens,
+                    output_tokens: send.output_tokens,
+                    cached_tokens: send.cached_tokens,
                     error: None,
                     retry_turn_id: None,
                 },
             )
             .await?;
 
-            // Link old failed turn to the new turn
+            // Link old failed turn to the new turn.
             update_turn(
                 &state.db,
                 old_turn_id,
                 UpdateTurnParams {
                     status: old_turn.status.as_str(),
                     assistant_text: old_turn.assistant_text.as_deref(),
-                    raw_items: &old_turn.raw_items,
+                    turn_messages: &old_turn.turn_messages,
                     response_id: old_turn.response_id.as_deref(),
                     provider: old_turn.provider.as_deref().unwrap_or(""),
                     model: old_turn.model.as_deref().unwrap_or(""),
@@ -276,14 +353,14 @@ pub async fn retry_turn_handler(
         Err(e) => {
             error!("Retry API call failed: {}", e);
             let error_json = serde_json::json!({ "message": e.to_string() });
-            let raw_items = serde_json::json!([]);
+            let turn_messages = build_failed_turn_messages(protocol, &user_text);
             let new_turn = update_turn(
                 &state.db,
                 new_turn.id,
                 UpdateTurnParams {
                     status: "failed",
                     assistant_text: None,
-                    raw_items: &raw_items,
+                    turn_messages: &turn_messages,
                     response_id: None,
                     provider: &req.provider,
                     model: &req.model,
@@ -296,14 +373,14 @@ pub async fn retry_turn_handler(
             )
             .await?;
 
-            // Link old failed turn to the new (also failed) turn
+            // Link old failed turn to the new (also failed) turn.
             update_turn(
                 &state.db,
                 old_turn_id,
                 UpdateTurnParams {
                     status: old_turn.status.as_str(),
                     assistant_text: old_turn.assistant_text.as_deref(),
-                    raw_items: &old_turn.raw_items,
+                    turn_messages: &old_turn.turn_messages,
                     response_id: old_turn.response_id.as_deref(),
                     provider: old_turn.provider.as_deref().unwrap_or(""),
                     model: old_turn.model.as_deref().unwrap_or(""),

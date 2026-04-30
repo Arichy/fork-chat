@@ -45,8 +45,8 @@ describe('MessageView', () => {
   });
 
   it('renders the model string', () => {
-    render(<MessageView turn={makeTurn({ model: 'gpt-4o' })} />);
-    expect(screen.getByText('gpt-4o')).toBeInTheDocument();
+    render(<MessageView turn={makeTurn({ model: 'gpt-5.5' })} />);
+    expect(screen.getByText('gpt-5.5')).toBeInTheDocument();
   });
 
   it('renders error JSON when error is present', () => {

@@ -1,17 +1,23 @@
 use sqlx::PgPool;
 use uuid::Uuid;
 
+use crate::config::Protocol;
 use crate::error::{AppError, Result};
 use crate::models::Session;
 
-pub async fn create_session(db: &PgPool, system_prompt: Option<&str>) -> Result<Session> {
+pub async fn create_session(
+    db: &PgPool,
+    protocol: Protocol,
+    system_prompt: Option<&str>,
+) -> Result<Session> {
     sqlx::query_as::<_, Session>(
         r#"
-        INSERT INTO sessions (system_prompt)
-        VALUES ($1)
+        INSERT INTO sessions (protocol, system_prompt)
+        VALUES ($1, $2)
         RETURNING *
         "#,
     )
+    .bind(protocol.as_str())
     .bind(system_prompt)
     .fetch_one(db)
     .await

@@ -13,9 +13,6 @@ pub enum AppError {
     #[error("Bad request: {0}")]
     BadRequest(String),
 
-    #[error("Unsupported provider: {0}")]
-    UnsupportedProvider(String),
-
     #[error("LLM API error: {0}")]
     LlmApiError(String),
 
@@ -40,7 +37,6 @@ impl IntoResponse for AppError {
         let (status, message) = match &self {
             AppError::NotFound(_) => (StatusCode::NOT_FOUND, self.to_string()),
             AppError::BadRequest(_) => (StatusCode::BAD_REQUEST, self.to_string()),
-            AppError::UnsupportedProvider(_) => (StatusCode::BAD_REQUEST, self.to_string()),
             AppError::LlmApiError(_) => (StatusCode::BAD_GATEWAY, self.to_string()),
             AppError::DatabaseError(_) => (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()),
             AppError::Internal(_) => (

@@ -15,6 +15,7 @@ import {
 import { useRef, useState } from 'react';
 import { Toaster } from 'sonner';
 import { api } from '../api';
+import type { Protocol } from '../api/types';
 import { Button } from '../components/ui/button';
 import {
   Dialog,
@@ -30,6 +31,13 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '../components/ui/dropdown-menu';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '../components/ui/select';
 import { useChatStore } from '../store';
 
 type SessionSummary = {
@@ -124,7 +132,7 @@ function SessionSidebar() {
   });
 
   const createMutation = useMutation({
-    mutationFn: () => api.sessions.create({}),
+    mutationFn: (protocol: Protocol) => api.sessions.create({ protocol }),
     onSuccess: (result) => {
       qc.invalidateQueries({ queryKey: ['sessions'] });
       navigate({
@@ -133,6 +141,20 @@ function SessionSidebar() {
       });
     },
   });
+
+  // Protocol the next "new session" click will use. Defaults to openai; the
+  // inline Select lets users switch before clicking +.
+  const [newSessionProtocol, setNewSessionProtocol] =
+    useState<Protocol>('openai');
+
+  const { data: configData } = useQuery({
+    queryKey: ['config'],
+    queryFn: api.config.get,
+  });
+  const availableProtocols: Protocol[] = configData?.protocols ?? [
+    'openai',
+    'anthropic',
+  ];
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) => api.sessions.delete(id),
@@ -181,10 +203,10 @@ function SessionSidebar() {
         </button>
         <button
           type="button"
-          onClick={() => createMutation.mutate()}
+          onClick={() => createMutation.mutate(newSessionProtocol)}
           disabled={createMutation.isPending}
           className="p-1.5 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 rounded-md transition-colors disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
-          title="New session"
+          title={`New ${newSessionProtocol} session`}
         >
           <Plus className="size-4" />
         </button>
@@ -197,12 +219,27 @@ function SessionSidebar() {
       <div className="p-3 border-b border-zinc-800 flex items-center justify-between">
         <h1 className="font-semibold tracking-tight">Fork Chat</h1>
         <div className="flex items-center gap-1">
+          <Select
+            value={newSessionProtocol}
+            onValueChange={(v) => setNewSessionProtocol(v as Protocol)}
+          >
+            <SelectTrigger className="h-7 px-2 text-xs" size="sm">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {availableProtocols.map((p) => (
+                <SelectItem key={p} value={p}>
+                  {p}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           <Button
-            onClick={() => createMutation.mutate()}
+            onClick={() => createMutation.mutate(newSessionProtocol)}
             disabled={createMutation.isPending}
             size="icon-xs"
             variant="secondary"
-            title="New session"
+            title={`New ${newSessionProtocol} session`}
           >
             <Plus className="size-3.5" />
           </Button>

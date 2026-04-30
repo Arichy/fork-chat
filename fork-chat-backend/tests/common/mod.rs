@@ -16,19 +16,21 @@
 
 #![allow(dead_code)]
 
+use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::Once;
 use std::time::Duration;
 
-use async_openai::Client;
-use async_openai::config::OpenAIConfig;
-use backoff::ExponentialBackoffBuilder;
-use fork_chat_backend::config::{AppState, Config, ModelConfig};
+use fork_chat_backend::config::{
+    AppState, Config, ModelConfig, Protocol, ProtocolBinding, ProviderConfig,
+};
+use fork_chat_backend::llm::{ProviderRegistry, RegistryOptions};
 use fork_chat_backend::routes::create_routes;
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
+use std::sync::Arc;
 use testcontainers::runners::AsyncRunner;
 use testcontainers::{ContainerAsync, ImageExt};
 use testcontainers_modules::postgres::Postgres as PostgresImage;
@@ -86,7 +88,10 @@ fn ensure_docker_host() {
 pub struct TestApp {
     pub address: String,
     pub db: PgPool,
+    /// Wiremock instance backing the `openai` provider binding.
     pub openai: MockServer,
+    /// Wiremock instance backing the `anthropic` provider binding.
+    pub anthropic: MockServer,
     pub http: reqwest::Client,
     // Kept last so it is dropped after `db` (pool closes before container goes
     // away, avoiding a noisy "connection refused" log during teardown).
@@ -108,11 +113,22 @@ impl TestApp {
         format!("{}{}", self.address, path)
     }
 
+    /// Create a session locked to the given protocol. Defaults to `openai` when
+    /// callers don't care (preserves behaviour of the old single-protocol tests).
     pub async fn create_session(&self, system_prompt: Option<&str>) -> Uuid {
-        let body = match system_prompt {
-            Some(sp) => json!({ "system_prompt": sp }),
-            None => json!({}),
-        };
+        self.create_session_with(Protocol::Openai, system_prompt)
+            .await
+    }
+
+    pub async fn create_session_with(
+        &self,
+        protocol: Protocol,
+        system_prompt: Option<&str>,
+    ) -> Uuid {
+        let mut body = json!({ "protocol": protocol });
+        if let Some(sp) = system_prompt {
+            body["system_prompt"] = json!(sp);
+        }
         let resp = self
             .http
             .post(self.url("/api/sessions"))
@@ -122,8 +138,9 @@ impl TestApp {
             .expect("create_session request failed");
         assert!(
             resp.status().is_success(),
-            "create_session returned {}",
-            resp.status()
+            "create_session returned {}: {}",
+            resp.status(),
+            resp.text().await.unwrap_or_default()
         );
         let v: Value = resp.json().await.expect("invalid session json");
         Uuid::parse_str(v["session"]["id"].as_str().unwrap()).unwrap()
@@ -138,7 +155,7 @@ impl TestApp {
                 "id": response_id,
                 "object": "response",
                 "created_at": 0,
-                "model": "gpt-4o-mini",
+                "model": "gpt-5.4-mini",
                 "status": "completed",
                 "output": [{
                     "type": "message",
@@ -174,10 +191,45 @@ impl TestApp {
             .mount(&self.openai)
             .await;
     }
+
+    // -------- Anthropic mocks (posts to `<base>/v1/messages`) --------
+
+    pub async fn mock_anthropic_success(&self, text: &str, response_id: &str) {
+        Mock::given(method("POST"))
+            .and(path("/v1/messages"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "id": response_id,
+                "type": "message",
+                "role": "assistant",
+                "model": "claude-sonnet-4-6",
+                "content": [{ "type": "text", "text": text }],
+                "stop_reason": "end_turn",
+                "usage": {
+                    "input_tokens": 11,
+                    "output_tokens": 22
+                }
+            })))
+            .expect(1..)
+            .mount(&self.anthropic)
+            .await;
+    }
+
+    pub async fn mock_anthropic_failure(&self, status: u16) {
+        Mock::given(method("POST"))
+            .and(path("/v1/messages"))
+            .respond_with(ResponseTemplate::new(status).set_body_json(json!({
+                "type": "error",
+                "error": { "type": "api_error", "message": "boom" }
+            })))
+            .expect(1..)
+            .mount(&self.anthropic)
+            .await;
+    }
 }
 
 /// Boot a real Axum server on a random localhost port against a fresh Postgres
-/// container, wired up to a wiremock-backed OpenAI endpoint.
+/// container, wired up to a wiremock-backed OpenAI endpoint plus an
+/// Anthropic-shaped one.
 pub async fn spawn_app() -> TestApp {
     ensure_docker_host();
 
@@ -215,41 +267,78 @@ pub async fn spawn_app() -> TestApp {
         .expect("failed to run migrations on test database");
 
     let openai = MockServer::start().await;
+    let anthropic = MockServer::start().await;
 
     let config = Config {
         database_url: db_url,
-        openai_api_key: "test-key".to_string(),
-        openai_base_url: Some(openai.uri()),
         server_addr: "127.0.0.1:0".to_string(),
-        models: vec![
-            ModelConfig {
-                id: "gpt-4o-mini".to_string(),
-                name: "GPT-4o Mini".to_string(),
-                provider: "openai".to_string(),
+        providers: vec![
+            ProviderConfig {
+                name: "openai".to_string(),
+                models: vec![
+                    ModelConfig {
+                        id: "gpt-5.4-mini".to_string(),
+                        name: Some("GPT-5.4 Mini".to_string()),
+                    },
+                    ModelConfig {
+                        id: "gpt-5.5".to_string(),
+                        name: Some("GPT-5.5".to_string()),
+                    },
+                ],
+                protocols: {
+                    let mut m = HashMap::new();
+                    m.insert(
+                        Protocol::Openai,
+                        ProtocolBinding {
+                            base_url: openai.uri(),
+                            api_key: "test-key".to_string(),
+                        },
+                    );
+                    m
+                },
             },
-            ModelConfig {
-                id: "gpt-4o".to_string(),
-                name: "GPT-4o".to_string(),
-                provider: "openai".to_string(),
+            ProviderConfig {
+                name: "anthropic".to_string(),
+                models: vec![
+                    ModelConfig {
+                        id: "claude-sonnet-4-6".to_string(),
+                        name: Some("Claude Sonnet 4.6".to_string()),
+                    },
+                    ModelConfig {
+                        id: "claude-opus-4-7".to_string(),
+                        name: Some("Claude Opus 4.7".to_string()),
+                    },
+                ],
+                protocols: {
+                    let mut m = HashMap::new();
+                    m.insert(
+                        Protocol::Anthropic,
+                        ProtocolBinding {
+                            base_url: anthropic.uri(),
+                            api_key: "test-anth-key".to_string(),
+                        },
+                    );
+                    m
+                },
             },
         ],
     };
 
-    // Build AppState directly so we can override async-openai's default
-    // ExponentialBackoff. The default `max_elapsed_time` is 15 minutes, which
-    // would make our 5xx-error tests hang while async-openai retries.
-    let mut openai_config = OpenAIConfig::new().with_api_key(&config.openai_api_key);
-    if let Some(base_url) = &config.openai_base_url {
-        openai_config = openai_config.with_api_base(base_url);
-    }
-    let no_retry = ExponentialBackoffBuilder::new()
-        .with_max_elapsed_time(Some(Duration::from_millis(0)))
-        .build();
-    let openai_client = Client::with_config(openai_config).with_backoff(no_retry);
+    // Build AppState manually so we can disable async-openai's 15-minute
+    // default exponential backoff and cap Anthropic's HTTP timeout: both make
+    // our 5xx-error tests would otherwise hang.
+    let config_arc = Arc::new(config);
+    let registry = ProviderRegistry::from_config_with(
+        &config_arc,
+        RegistryOptions {
+            openai_no_retry: true,
+            anthropic_timeout: Duration::from_secs(5),
+        },
+    );
     let state = AppState {
         db: db.clone(),
-        config,
-        openai_client,
+        config: config_arc,
+        registry: Arc::new(registry),
     };
     let app = create_routes(state);
 
@@ -266,6 +355,7 @@ pub async fn spawn_app() -> TestApp {
         address: format!("http://127.0.0.1:{port}"),
         db,
         openai,
+        anthropic,
         http: reqwest::Client::new(),
         _pg: container,
     }

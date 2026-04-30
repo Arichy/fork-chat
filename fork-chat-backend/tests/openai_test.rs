@@ -1,5 +1,5 @@
 use async_openai::types::responses::Response;
-use fork_chat_backend::openai::OpenaiAdapter;
+use fork_chat_backend::llm::openai::OpenaiAdapter;
 use serde_json::json;
 
 /// Build a minimal `Response` fixture from a JSON value.

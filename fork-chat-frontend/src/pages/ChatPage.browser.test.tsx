@@ -2,8 +2,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Turn } from '../api/types';
-import { makeTurn } from '../test/fixtures';
+import type { ConfigResponse, Turn } from '../api/types';
+import { makeSession, makeTurn } from '../test/fixtures';
 import { ChatPage } from './ChatPage';
 
 // Mock TanStack Router so ChatPage can call useParams without a real router.
@@ -14,23 +14,36 @@ vi.mock('@tanstack/react-router', () => ({
 // Mock toast so error branches don't blow up without a <Toaster />.
 vi.mock('sonner', () => ({ toast: { error: vi.fn() } }));
 
+const CONFIG: ConfigResponse = {
+  protocols: ['openai', 'anthropic'],
+  providers: [
+    {
+      name: 'openai',
+      supported_protocols: ['openai'],
+      models: [{ id: 'gpt-5.4-mini', name: 'GPT-5.4 Mini' }],
+    },
+  ],
+};
+
 // Use vi.hoisted so these mocks are available when vi.mock's factory runs
 // (vi.mock is hoisted to the top of the file).
-const { turnsApi, configGet } = vi.hoisted(() => ({
+const { turnsApi, sessionsApi, configGet } = vi.hoisted(() => ({
   turnsApi: {
     create: vi.fn(),
     retry: vi.fn(),
     tree: vi.fn(),
     get: vi.fn(),
   },
-  configGet: vi.fn().mockResolvedValue({
-    models: [{ id: 'gpt-4o-mini', name: 'GPT-4o Mini', provider: 'openai' }],
-  }),
+  sessionsApi: {
+    get: vi.fn(),
+  },
+  configGet: vi.fn(),
 }));
 
 vi.mock('../api', () => ({
   api: {
     config: { get: configGet },
+    sessions: sessionsApi,
     turns: turnsApi,
   },
 }));
@@ -39,9 +52,7 @@ function renderPage() {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-  client.setQueryData(['config'], {
-    models: [{ id: 'gpt-4o-mini', name: 'GPT-4o Mini', provider: 'openai' }],
-  });
+  client.setQueryData(['config'], CONFIG);
   return render(
     <QueryClientProvider client={client}>
       <div style={{ width: 1200, height: 800 }}>
@@ -57,6 +68,12 @@ describe('ChatPage', () => {
     turnsApi.retry.mockReset();
     turnsApi.tree.mockReset();
     turnsApi.get.mockReset();
+    sessionsApi.get.mockReset();
+    sessionsApi.get.mockResolvedValue({
+      session: makeSession({ id: 'session-1', protocol: 'openai' }),
+    });
+    configGet.mockReset();
+    configGet.mockResolvedValue(CONFIG);
   });
 
   it('shows the empty state with MessageInput when tree is empty', async () => {
@@ -99,7 +116,7 @@ describe('ChatPage', () => {
         user_text: 'hi',
         parent_turn_id: undefined,
         provider: 'openai',
-        model: 'gpt-4o-mini',
+        model: 'gpt-5.4-mini',
       });
     });
 

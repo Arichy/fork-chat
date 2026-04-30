@@ -11,7 +11,7 @@ async fn post_sessions_creates_a_session() {
     let resp = app
         .http
         .post(app.url("/api/sessions"))
-        .json(&json!({}))
+        .json(&json!({ "protocol": "openai" }))
         .send()
         .await
         .unwrap();
@@ -21,6 +21,46 @@ async fn post_sessions_creates_a_session() {
     assert!(Uuid::parse_str(body["session"]["id"].as_str().unwrap()).is_ok());
     assert!(body["session"]["title"].is_null());
     assert!(body["session"]["system_prompt"].is_null());
+    assert_eq!(body["session"]["protocol"], "openai");
+
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn post_sessions_rejects_missing_protocol() {
+    let app = spawn_app().await;
+
+    let resp = app
+        .http
+        .post(app.url("/api/sessions"))
+        .json(&json!({}))
+        .send()
+        .await
+        .unwrap();
+    // Axum returns 422 for JSON deserialization failures by default.
+    assert!(
+        !resp.status().is_success(),
+        "expected failure, got {}",
+        resp.status()
+    );
+
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn post_sessions_accepts_anthropic_protocol() {
+    let app = spawn_app().await;
+
+    let resp = app
+        .http
+        .post(app.url("/api/sessions"))
+        .json(&json!({ "protocol": "anthropic" }))
+        .send()
+        .await
+        .unwrap();
+    assert!(resp.status().is_success(), "status={}", resp.status());
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["session"]["protocol"], "anthropic");
 
     app.cleanup().await;
 }
@@ -32,7 +72,7 @@ async fn post_sessions_persists_system_prompt() {
     let resp = app
         .http
         .post(app.url("/api/sessions"))
-        .json(&json!({ "system_prompt": "be concise" }))
+        .json(&json!({ "protocol": "openai", "system_prompt": "be concise" }))
         .send()
         .await
         .unwrap();
@@ -185,7 +225,7 @@ async fn delete_session_cascades_to_turns() {
         .json(&json!({
             "user_text": "hello",
             "provider": "openai",
-            "model": "gpt-4o-mini",
+            "model": "gpt-5.4-mini",
         }))
         .send()
         .await

@@ -17,7 +17,7 @@ async fn post_turn_success_completes_and_auto_titles_session() {
         .json(&json!({
             "user_text": "Hi there",
             "provider": "openai",
-            "model": "gpt-4o-mini",
+            "model": "gpt-5.4-mini",
         }))
         .send()
         .await
@@ -30,7 +30,7 @@ async fn post_turn_success_completes_and_auto_titles_session() {
     assert_eq!(body["turn"]["response_id"], "resp_ok");
     assert_eq!(body["turn"]["input_tokens"], 10);
     assert_eq!(body["turn"]["output_tokens"], 20);
-    assert_eq!(body["turn"]["model"], "gpt-4o-mini");
+    assert_eq!(body["turn"]["model"], "gpt-5.4-mini");
     assert_eq!(body["turn"]["provider"], "openai");
 
     // Session should now be auto-titled from the first 50 chars of user_text.
@@ -60,7 +60,7 @@ async fn post_turn_rejects_second_root() {
         .json(&json!({
             "user_text": "first root",
             "provider": "openai",
-            "model": "gpt-4o-mini",
+            "model": "gpt-5.4-mini",
         }))
         .send()
         .await
@@ -73,7 +73,7 @@ async fn post_turn_rejects_second_root() {
         .json(&json!({
             "user_text": "second root",
             "provider": "openai",
-            "model": "gpt-4o-mini",
+            "model": "gpt-5.4-mini",
         }))
         .send()
         .await
@@ -103,7 +103,7 @@ async fn post_turn_accepts_fork_from_existing_parent() {
         .json(&json!({
             "user_text": "root",
             "provider": "openai",
-            "model": "gpt-4o-mini",
+            "model": "gpt-5.4-mini",
         }))
         .send()
         .await
@@ -118,7 +118,7 @@ async fn post_turn_accepts_fork_from_existing_parent() {
             "user_text": "child",
             "parent_turn_id": parent_id,
             "provider": "openai",
-            "model": "gpt-4o-mini",
+            "model": "gpt-5.4-mini",
         }))
         .send()
         .await
@@ -144,7 +144,7 @@ async fn post_turn_rejects_parent_from_another_session() {
         .json(&json!({
             "user_text": "first session root",
             "provider": "openai",
-            "model": "gpt-4o-mini",
+            "model": "gpt-5.4-mini",
         }))
         .send()
         .await
@@ -161,7 +161,7 @@ async fn post_turn_rejects_parent_from_another_session() {
             "user_text": "should not cross sessions",
             "parent_turn_id": foreign_parent_id,
             "provider": "openai",
-            "model": "gpt-4o-mini",
+            "model": "gpt-5.4-mini",
         }))
         .send()
         .await
@@ -180,8 +180,10 @@ async fn post_turn_rejects_parent_from_another_session() {
 }
 
 #[tokio::test]
-async fn post_turn_rejects_unsupported_provider() {
+async fn post_turn_rejects_provider_not_on_session_protocol() {
     let app = spawn_app().await;
+    // Session is openai-protocol; 'anthropic' provider only supports anthropic
+    // protocol, so dispatch must refuse even though the provider exists.
     let session_id = app.create_session(None).await;
 
     let resp = app
@@ -190,14 +192,75 @@ async fn post_turn_rejects_unsupported_provider() {
         .json(&json!({
             "user_text": "hi",
             "provider": "anthropic",
-            "model": "claude",
+            "model": "claude-sonnet-4-6",
         }))
         .send()
         .await
         .unwrap();
     assert_eq!(resp.status(), reqwest::StatusCode::BAD_REQUEST);
     let err: Value = resp.json().await.unwrap();
-    assert!(err["error"].as_str().unwrap().contains("Unsupported"));
+    assert!(
+        err["error"]
+            .as_str()
+            .unwrap()
+            .contains("not configured for protocol"),
+        "got error: {err}"
+    );
+
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn post_turn_rejects_unknown_provider() {
+    let app = spawn_app().await;
+    let session_id = app.create_session(None).await;
+
+    let resp = app
+        .http
+        .post(app.url(&format!("/api/sessions/{session_id}/turns")))
+        .json(&json!({
+            "user_text": "hi",
+            "provider": "does-not-exist",
+            "model": "gpt-5.4-mini",
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), reqwest::StatusCode::BAD_REQUEST);
+    let err: Value = resp.json().await.unwrap();
+    assert!(
+        err["error"].as_str().unwrap().contains("unknown provider"),
+        "got error: {err}"
+    );
+
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn post_turn_rejects_model_not_exposed_by_provider() {
+    let app = spawn_app().await;
+    let session_id = app.create_session(None).await;
+
+    let resp = app
+        .http
+        .post(app.url(&format!("/api/sessions/{session_id}/turns")))
+        .json(&json!({
+            "user_text": "hi",
+            "provider": "openai",
+            "model": "not-a-model",
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), reqwest::StatusCode::BAD_REQUEST);
+    let err: Value = resp.json().await.unwrap();
+    assert!(
+        err["error"]
+            .as_str()
+            .unwrap()
+            .contains("not exposed by provider"),
+        "got error: {err}"
+    );
 
     app.cleanup().await;
 }
@@ -210,7 +273,7 @@ async fn post_turn_rejects_reply_to_failed_parent() {
     // Insert a failed root turn directly via sqlx.
     let failed_id: Uuid = sqlx::query_scalar(
         r#"
-        INSERT INTO turns (session_id, parent_turn_id, status, user_text, raw_items)
+        INSERT INTO turns (session_id, parent_turn_id, status, user_text, turn_messages)
         VALUES ($1, NULL, 'failed', 'bad', '[]'::jsonb)
         RETURNING id
         "#,
@@ -227,7 +290,7 @@ async fn post_turn_rejects_reply_to_failed_parent() {
             "user_text": "reply",
             "parent_turn_id": failed_id,
             "provider": "openai",
-            "model": "gpt-4o-mini",
+            "model": "gpt-5.4-mini",
         }))
         .send()
         .await
@@ -251,7 +314,7 @@ async fn post_turn_persists_failed_status_when_openai_errors() {
         .json(&json!({
             "user_text": "hello",
             "provider": "openai",
-            "model": "gpt-4o-mini",
+            "model": "gpt-5.4-mini",
         }))
         .send()
         .await
@@ -286,7 +349,7 @@ async fn retry_succeeds_and_links_old_turn() {
         .json(&json!({
             "user_text": "retry me",
             "provider": "openai",
-            "model": "gpt-4o-mini",
+            "model": "gpt-5.4-mini",
         }))
         .send()
         .await
@@ -311,7 +374,7 @@ async fn retry_succeeds_and_links_old_turn() {
         )))
         .json(&json!({
             "provider": "openai",
-            "model": "gpt-4o-mini",
+            "model": "gpt-5.4-mini",
         }))
         .send()
         .await
@@ -341,7 +404,7 @@ async fn retry_rejects_turn_from_another_session() {
 
     let foreign_failed_id: Uuid = sqlx::query_scalar(
         r#"
-        INSERT INTO turns (session_id, parent_turn_id, status, user_text, raw_items)
+        INSERT INTO turns (session_id, parent_turn_id, status, user_text, turn_messages)
         VALUES ($1, NULL, 'failed', 'foreign failure', '[]'::jsonb)
         RETURNING id
         "#,
@@ -358,7 +421,7 @@ async fn retry_rejects_turn_from_another_session() {
         )))
         .json(&json!({
             "provider": "openai",
-            "model": "gpt-4o-mini",
+            "model": "gpt-5.4-mini",
         }))
         .send()
         .await
@@ -388,7 +451,7 @@ async fn retry_double_failure_still_links_turns() {
         .json(&json!({
             "user_text": "boom",
             "provider": "openai",
-            "model": "gpt-4o-mini",
+            "model": "gpt-5.4-mini",
         }))
         .send()
         .await
@@ -406,7 +469,7 @@ async fn retry_double_failure_still_links_turns() {
         .post(app.url(&format!("/api/sessions/{session_id}/turns/{old_id}/retry")))
         .json(&json!({
             "provider": "openai",
-            "model": "gpt-4o-mini",
+            "model": "gpt-5.4-mini",
         }))
         .send()
         .await
@@ -430,14 +493,14 @@ async fn retry_double_failure_still_links_turns() {
 }
 
 #[tokio::test]
-async fn retry_rejects_unsupported_provider() {
+async fn retry_rejects_provider_not_on_session_protocol() {
     let app = spawn_app().await;
     let session_id = app.create_session(None).await;
 
     // Insert a failed turn directly so we have something to retry.
     let failed_id: Uuid = sqlx::query_scalar(
         r#"
-        INSERT INTO turns (session_id, parent_turn_id, status, user_text, raw_items)
+        INSERT INTO turns (session_id, parent_turn_id, status, user_text, turn_messages)
         VALUES ($1, NULL, 'failed', 'x', '[]'::jsonb)
         RETURNING id
         "#,
@@ -447,12 +510,14 @@ async fn retry_rejects_unsupported_provider() {
     .await
     .unwrap();
 
+    // Session is openai-protocol; trying to retry with the anthropic provider
+    // must fail at the dispatch layer.
     let resp = app
         .http
         .post(app.url(&format!(
             "/api/sessions/{session_id}/turns/{failed_id}/retry"
         )))
-        .json(&json!({ "provider": "anthropic", "model": "claude" }))
+        .json(&json!({ "provider": "anthropic", "model": "claude-sonnet-4-6" }))
         .send()
         .await
         .unwrap();

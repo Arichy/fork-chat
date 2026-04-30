@@ -9,6 +9,9 @@ tokio = { version = "1.52.1", features = ["full"] }
 tower-http = { version = "0.6.8", features = ["cors", "trace"] }
 
 async-openai = { version = "0.35.0", features = ["responses"] }
+async-trait = "0.1.83"
+backoff = "0.4"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
 sqlx = { version = "0.8.6", features = ["runtime-tokio", "postgres", "uuid", "chrono", "json"] }
 
@@ -25,6 +28,7 @@ tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 
 dotenvy = "0.15.7"
+config = { version = "0.15", default-features = false, features = ["json"] }
 
 [dev-dependencies]
 tokio-test = "0.4"
@@ -35,5 +39,3 @@ testcontainers = { version = "0.24", features = ["watchdog"] }
 testcontainers-modules = { version = "0.12", features = ["postgres"] }
 tower = "0.5"
 tower-service = "0.3"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-backoff = "0.4"

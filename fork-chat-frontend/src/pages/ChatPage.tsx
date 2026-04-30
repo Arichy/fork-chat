@@ -14,6 +14,17 @@ export function ChatPage() {
   const [modalTurnId, setModalTurnId] = useState<string | null>(null);
 
   const {
+    data: sessionData,
+    isLoading: sessionLoading,
+    error: sessionError,
+  } = useQuery({
+    queryKey: ['session', sessionId],
+    queryFn: () => api.sessions.get(sessionId),
+    retry: false,
+  });
+  const protocol = sessionData?.session.protocol;
+
+  const {
     data: treeData,
     isLoading: treeLoading,
     error: treeError,
@@ -26,13 +37,14 @@ export function ChatPage() {
   const sendMutation = useMutation({
     mutationFn: (data: {
       text: string;
+      provider: string;
       model: string;
       parentId: string | null;
     }) =>
       api.turns.create(sessionId, {
         user_text: data.text,
         parent_turn_id: data.parentId ?? undefined,
-        provider: 'openai',
+        provider: data.provider,
         model: data.model,
       }),
     onSuccess: (result) => {
@@ -49,9 +61,9 @@ export function ChatPage() {
   });
 
   const retryMutation = useMutation({
-    mutationFn: (data: { turnId: string; model: string }) =>
+    mutationFn: (data: { turnId: string; provider: string; model: string }) =>
       api.turns.retry(sessionId, data.turnId, {
-        provider: 'openai',
+        provider: data.provider,
         model: data.model,
       }),
     onSuccess: () => {
@@ -83,22 +95,27 @@ export function ChatPage() {
     [setSelectedTurn],
   );
 
-  const handleSend = (text: string, model: string, parentId: string | null) => {
-    sendMutation.mutate({ text, model, parentId });
+  const handleSend = (
+    text: string,
+    provider: string,
+    model: string,
+    parentId: string | null,
+  ) => {
+    sendMutation.mutate({ text, provider, model, parentId });
   };
 
-  const handleRetry = (turnId: string, model: string) => {
-    retryMutation.mutate({ turnId, model });
+  const handleRetry = (turnId: string, provider: string, model: string) => {
+    retryMutation.mutate({ turnId, provider, model });
   };
 
   return (
     <div className="h-full flex">
       <div className="flex-1">
-        {treeError ? (
+        {sessionError || treeError ? (
           <div className="flex items-center justify-center h-full text-muted-foreground">
             Session not found
           </div>
-        ) : treeLoading ? (
+        ) : sessionLoading || treeLoading || !protocol ? (
           <div className="flex items-center justify-center h-full text-muted-foreground">
             Loading...
           </div>
@@ -110,6 +127,7 @@ export function ChatPage() {
             <div className="w-full max-w-md">
               <MessageInput
                 parentTurn={null}
+                protocol={protocol}
                 onSend={handleSend}
                 disabled={sendMutation.isPending}
               />
@@ -129,16 +147,19 @@ export function ChatPage() {
         )}
       </div>
 
-      <TurnDetailModal
-        turn={modalTurn}
-        open={modalTurnId !== null}
-        onOpenChange={(open) => {
-          if (!open) setModalTurnId(null);
-        }}
-        onSend={handleSend}
-        onRetry={handleRetry}
-        isSending={sendMutation.isPending || retryMutation.isPending}
-      />
+      {protocol && (
+        <TurnDetailModal
+          turn={modalTurn}
+          protocol={protocol}
+          open={modalTurnId !== null}
+          onOpenChange={(open) => {
+            if (!open) setModalTurnId(null);
+          }}
+          onSend={handleSend}
+          onRetry={handleRetry}
+          isSending={sendMutation.isPending || retryMutation.isPending}
+        />
+      )}
     </div>
   );
 }

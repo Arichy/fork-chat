@@ -9,12 +9,14 @@ import { api } from './client';
 const API_BASE = 'http://localhost:3000/api';
 
 describe('api.config', () => {
-  it('GET /config returns models', async () => {
+  it('GET /config returns the sanitized protocols + providers shape', async () => {
     const result = await api.config.get();
-    expect(result.models.length).toBeGreaterThan(0);
-    expect(result.models[0]).toMatchObject({
-      id: expect.any(String),
-      provider: expect.any(String),
+    expect(result.protocols).toEqual(expect.arrayContaining(['openai']));
+    expect(result.providers.length).toBeGreaterThan(0);
+    expect(result.providers[0]).toMatchObject({
+      name: expect.any(String),
+      supported_protocols: expect.any(Array),
+      models: expect.any(Array),
     });
   });
 });
@@ -40,6 +42,7 @@ describe('api.sessions', () => {
             id: 's',
             title: null,
             system_prompt: null,
+            protocol: 'openai',
             metadata: {},
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
@@ -48,8 +51,8 @@ describe('api.sessions', () => {
       }),
     );
 
-    await api.sessions.create({ system_prompt: 'be nice' });
-    expect(captured).toEqual({ system_prompt: 'be nice' });
+    await api.sessions.create({ protocol: 'openai', system_prompt: 'be nice' });
+    expect(captured).toEqual({ protocol: 'openai', system_prompt: 'be nice' });
   });
 
   it('delete() uses DELETE method', async () => {
@@ -68,7 +71,7 @@ describe('api.turns', () => {
     const { turn } = await api.turns.create('session-x', {
       user_text: 'hi',
       provider: 'openai',
-      model: 'gpt-4o-mini',
+      model: 'gpt-5.4-mini',
     });
     expect(turn.user_text).toBe('hi');
     expect(turn.session_id).toBe('session-x');
@@ -77,7 +80,7 @@ describe('api.turns', () => {
   it('retry() POSTs to /turns/:id/retry', async () => {
     const { turn } = await api.turns.retry('s1', 't1', {
       provider: 'openai',
-      model: 'gpt-4o-mini',
+      model: 'gpt-5.4-mini',
     });
     expect(turn.status).toBe('completed');
   });
@@ -113,6 +116,7 @@ describe('fetchApi error handling', () => {
             id: 's',
             title: null,
             system_prompt: null,
+            protocol: 'openai',
             metadata: {},
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
@@ -120,7 +124,7 @@ describe('fetchApi error handling', () => {
         });
       }),
     );
-    await api.sessions.create({});
+    await api.sessions.create({ protocol: 'openai' });
     expect(contentType).toBe('application/json');
   });
 });

@@ -28,6 +28,7 @@ dist-ssr
 *.sw?
 
 .env
+fork-chat-backend/config.json
 
 target
 

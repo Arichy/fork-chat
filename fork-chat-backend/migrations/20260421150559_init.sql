@@ -4,6 +4,7 @@ CREATE TABLE
     id UUID PRIMARY KEY DEFAULT gen_random_uuid (),
     title TEXT,
     system_prompt TEXT,
+    protocol TEXT NOT NULL CHECK (protocol IN ('openai', 'anthropic')),
     metadata JSONB NOT NULL DEFAULT '{}',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now (),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now ()
@@ -19,7 +20,7 @@ CREATE TABLE
     status TEXT NOT NULL CHECK (status IN ('running', 'completed', 'failed')),
     user_text TEXT, -- user input
     assistant_text TEXT, -- final text from AI, would be null when running
-    raw_items JSONB NOT NULL DEFAULT '[]', -- Stores the raw output from API response
+    turn_messages JSONB NOT NULL DEFAULT '[]', -- Per-turn message transcript (user/tool results + assistant replies)
     response_id TEXT, -- OpenAI Responses API response.id for conversation continuity
     provider TEXT,
     model TEXT,

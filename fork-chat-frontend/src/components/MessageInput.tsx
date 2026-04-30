@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { api } from '../api';
-import type { Model, Turn } from '../api/types';
+import type { Protocol, PublicProvider, Turn } from '../api/types';
 import { Button } from './ui/button';
 import {
   Select,
@@ -14,31 +14,84 @@ import { Textarea } from './ui/textarea';
 
 interface MessageInputProps {
   parentTurn: Turn | null;
-  onSend: (text: string, model: string, parentId: string | null) => void;
+  /** Protocol the current session is locked to. Only providers supporting
+   * this protocol (and their models) are shown in the picker. */
+  protocol: Protocol;
+  onSend: (
+    text: string,
+    provider: string,
+    model: string,
+    parentId: string | null,
+  ) => void;
   disabled?: boolean;
+}
+
+/** A flat `(provider, model)` pair presented in the picker. Encoded in the
+ * Select's value as `${provider}|${model}` to keep the API simple. */
+type ProviderModelOption = {
+  key: string;
+  provider: string;
+  modelId: string;
+  label: string;
+};
+
+function flatten(
+  providers: PublicProvider[],
+  protocol: Protocol,
+): ProviderModelOption[] {
+  const out: ProviderModelOption[] = [];
+  for (const p of providers) {
+    if (!p.supported_protocols.includes(protocol)) continue;
+    for (const m of p.models) {
+      out.push({
+        key: `${p.name}|${m.id}`,
+        provider: p.name,
+        modelId: m.id,
+        label: `${p.name} · ${m.name ?? m.id}`,
+      });
+    }
+  }
+  return out;
 }
 
 export function MessageInput({
   parentTurn,
+  protocol,
   onSend,
   disabled,
 }: MessageInputProps) {
   const [text, setText] = useState('');
-  const [selectedModel, setSelectedModel] = useState('');
+  const [selectedKey, setSelectedKey] = useState<string>('');
 
   const { data: config } = useQuery({
     queryKey: ['config'],
     queryFn: api.config.get,
   });
 
-  const models: Model[] = config?.models ?? [];
-  const defaultModel = models[0]?.id ?? '';
-  const currentModel = selectedModel || defaultModel;
+  const options = useMemo(
+    () => flatten(config?.providers ?? [], protocol),
+    [config, protocol],
+  );
+
+  const parentDefaultKey = useMemo(() => {
+    if (!parentTurn?.provider || !parentTurn?.model) return '';
+    const key = `${parentTurn.provider}|${parentTurn.model}`;
+    return options.some((opt) => opt.key === key) ? key : '';
+  }, [options, parentTurn?.provider, parentTurn?.model]);
+
+  const defaultKey = options[0]?.key ?? '';
+  const currentKey = selectedKey || parentDefaultKey || defaultKey;
+  const current = options.find((o) => o.key === currentKey);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (text.trim() && !disabled && currentModel) {
-      onSend(text.trim(), currentModel, parentTurn?.id ?? null);
+    if (text.trim() && !disabled && current) {
+      onSend(
+        text.trim(),
+        current.provider,
+        current.modelId,
+        parentTurn?.id ?? null,
+      );
       setText('');
     }
   };
@@ -66,22 +119,28 @@ export function MessageInput({
       />
       <div className="flex gap-2">
         <Select
-          value={currentModel}
-          onValueChange={(v) => setSelectedModel(v ?? '')}
-          disabled={disabled}
+          value={currentKey}
+          onValueChange={(v) => setSelectedKey(v ?? '')}
+          disabled={disabled || options.length === 0}
         >
           <SelectTrigger className="flex-1">
-            <SelectValue placeholder="Select model" />
+            <SelectValue
+              placeholder={
+                options.length === 0
+                  ? `No providers configured for protocol "${protocol}"`
+                  : 'Select provider / model'
+              }
+            />
           </SelectTrigger>
           <SelectContent>
-            {models.map((model) => (
-              <SelectItem key={model.id} value={model.id}>
-                {model.name}
+            {options.map((opt) => (
+              <SelectItem key={opt.key} value={opt.key}>
+                {opt.label}
               </SelectItem>
             ))}
           </SelectContent>
         </Select>
-        <Button type="submit" disabled={disabled || !text.trim()}>
+        <Button type="submit" disabled={disabled || !text.trim() || !current}>
           Send
         </Button>
       </div>

@@ -17,7 +17,7 @@ async fn get_tree_returns_all_turns_ordered_by_created_at() {
         .json(&json!({
             "user_text": "root",
             "provider": "openai",
-            "model": "gpt-4o-mini",
+            "model": "gpt-5.4-mini",
         }))
         .send()
         .await
@@ -35,7 +35,7 @@ async fn get_tree_returns_all_turns_ordered_by_created_at() {
             "user_text": "left",
             "parent_turn_id": root_id,
             "provider": "openai",
-            "model": "gpt-4o-mini",
+            "model": "gpt-5.4-mini",
         }))
         .send()
         .await
@@ -53,7 +53,7 @@ async fn get_tree_returns_all_turns_ordered_by_created_at() {
             "user_text": "right",
             "parent_turn_id": root_id,
             "provider": "openai",
-            "model": "gpt-4o-mini",
+            "model": "gpt-5.4-mini",
         }))
         .send()
         .await
@@ -108,7 +108,7 @@ async fn get_single_turn_returns_turn_or_404() {
         .json(&json!({
             "user_text": "first",
             "provider": "openai",
-            "model": "gpt-4o-mini",
+            "model": "gpt-5.4-mini",
         }))
         .send()
         .await
@@ -153,7 +153,7 @@ async fn get_single_turn_returns_404_for_turn_from_another_session() {
         .json(&json!({
             "user_text": "private to first session",
             "provider": "openai",
-            "model": "gpt-4o-mini",
+            "model": "gpt-5.4-mini",
         }))
         .send()
         .await

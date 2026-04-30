@@ -2,20 +2,30 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
-import type { Turn } from '../api/types';
+import type { ConfigResponse, Protocol, Turn } from '../api/types';
 import { makeTurn } from '../test/fixtures';
 import { TurnDetailModal } from './TurnDetailModal';
+
+const { CONFIG } = vi.hoisted(() => {
+  const CONFIG: ConfigResponse = {
+    protocols: ['openai', 'anthropic'],
+    providers: [
+      {
+        name: 'openai',
+        supported_protocols: ['openai'],
+        models: [{ id: 'gpt-5.4-mini', name: 'GPT-5.4 Mini' }],
+      },
+    ],
+  };
+  return { CONFIG };
+});
 
 // MessageInput queries the config endpoint through @/api; mock it out so the
 // modal renders deterministically in the browser project.
 vi.mock('../api', () => ({
   api: {
     config: {
-      get: vi.fn().mockResolvedValue({
-        models: [
-          { id: 'gpt-4o-mini', name: 'GPT-4o Mini', provider: 'openai' },
-        ],
-      }),
+      get: vi.fn().mockResolvedValue(CONFIG),
     },
   },
 }));
@@ -23,21 +33,21 @@ vi.mock('../api', () => ({
 function renderModal(props: {
   turn: Turn | null;
   open: boolean;
+  protocol?: Protocol;
   onOpenChange?: (v: boolean) => void;
-  onSend?: (t: string, m: string, pid: string | null) => void;
-  onRetry?: (id: string, model: string) => void;
+  onSend?: (t: string, provider: string, m: string, pid: string | null) => void;
+  onRetry?: (id: string, provider: string, model: string) => void;
   isSending?: boolean;
 }) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-  client.setQueryData(['config'], {
-    models: [{ id: 'gpt-4o-mini', name: 'GPT-4o Mini', provider: 'openai' }],
-  });
+  client.setQueryData(['config'], CONFIG);
   return render(
     <QueryClientProvider client={client}>
       <TurnDetailModal
         turn={props.turn}
+        protocol={props.protocol ?? 'openai'}
         open={props.open}
         onOpenChange={props.onOpenChange ?? vi.fn()}
         onSend={props.onSend ?? vi.fn()}
@@ -59,7 +69,8 @@ describe('TurnDetailModal', () => {
     const failed = makeTurn({
       id: 'failed-1',
       status: 'failed',
-      model: 'gpt-4o',
+      provider: 'openai',
+      model: 'gpt-5.5',
       user_text: 'broke',
       error: { message: 'boom' },
     });
@@ -67,7 +78,7 @@ describe('TurnDetailModal', () => {
 
     const retry = await screen.findByRole('button', { name: /retry/i });
     await userEvent.setup().click(retry);
-    expect(onRetry).toHaveBeenCalledWith('failed-1', 'gpt-4o');
+    expect(onRetry).toHaveBeenCalledWith('failed-1', 'openai', 'gpt-5.5');
   });
 
   it('hides Retry and shows MessageInput when status is not failed', async () => {
@@ -113,6 +124,7 @@ describe('TurnDetailModal', () => {
       >
         <TurnDetailModal
           turn={null}
+          protocol="openai"
           open={true}
           onOpenChange={vi.fn()}
           onSend={vi.fn()}
@@ -128,11 +140,11 @@ describe('TurnDetailModal', () => {
 
   it('displays the turn status badge and model', () => {
     renderModal({
-      turn: makeTurn({ status: 'running', model: 'gpt-4o' }),
+      turn: makeTurn({ status: 'running', model: 'gpt-5.5' }),
       open: true,
     });
     expect(screen.getByText('running')).toBeInTheDocument();
-    expect(screen.getByText('gpt-4o')).toBeInTheDocument();
+    expect(screen.getByText('gpt-5.5')).toBeInTheDocument();
   });
 
   it('renders error JSON for failed turns', () => {
