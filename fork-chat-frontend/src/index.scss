@@ -8,3 +8,34 @@
     transform: scale(0.95);
   }
 }
+
+/* Sidebar scrollbar: slim thumb, transparent track, fixed appearance.
+   Note: do NOT set `scrollbar-width` / `scrollbar-color` on the same element as
+   the WebKit rules below — Chromium/WebKit disables `::-webkit-scrollbar-*`
+   styling whenever the standard CSS scrollbar properties are present. */
+.sidebar-scrollbar::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.sidebar-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.sidebar-scrollbar::-webkit-scrollbar-thumb {
+  min-height: 24px;
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background: rgb(161 161 170 / 52%);
+  background-clip: content-box;
+}
+
+/* Firefox-only fallback — Firefox ignores the WebKit pseudo-elements above,
+   so we gate the standard properties behind an @supports test that's true in
+   Firefox and false in Chromium/WebKit. */
+@supports (scrollbar-width: thin) and (not selector(::-webkit-scrollbar)) {
+  .sidebar-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(161 161 170 / 70%) transparent;
+  }
+}

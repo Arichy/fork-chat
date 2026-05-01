@@ -3,7 +3,7 @@ import type {
   ConfigResponse,
   CreateSessionResponse,
   CreateTurnResponse,
-  Session,
+  SessionsPageResponse,
   TreeResponse,
   Turn,
 } from '../../api/types';
@@ -36,7 +36,10 @@ export const handlers = [
   }),
 
   http.get(`${API_BASE}/sessions`, () => {
-    const body: Session[] = [makeSession()];
+    const body: SessionsPageResponse = {
+      sessions: [makeSession()],
+      next_cursor: null,
+    };
     return HttpResponse.json(body);
   }),
 

@@ -259,6 +259,7 @@ export function ChatTree({
       zoomOnPinch={true}
       panOnDrag={[0, 1, 2]}
       selectionOnDrag={false}
+      maxZoom={1.5}
       className="bg-gray-50"
       proOptions={{
         hideAttribution: true,

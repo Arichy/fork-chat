@@ -57,6 +57,18 @@ export interface CreateSessionResponse {
   session: Session;
 }
 
+export interface SessionsPageCursor {
+  before_at: string;
+  before_id: string;
+}
+
+export type SessionsSort = 'updated_at' | 'created_at';
+
+export interface SessionsPageResponse {
+  sessions: Session[];
+  next_cursor: SessionsPageCursor | null;
+}
+
 export interface CreateTurnRequest {
   parent_turn_id?: string;
   user_text: string;

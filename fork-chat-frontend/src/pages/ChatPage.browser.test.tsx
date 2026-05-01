@@ -125,6 +125,34 @@ describe('ChatPage', () => {
     await screen.findByText('hi');
   });
 
+  it('auto-opens the failed turn after the first send fails', async () => {
+    const failed = makeTurn({
+      id: 'failed-1',
+      user_text: 'initial prompt',
+      status: 'failed',
+      retry_turn_id: null,
+    });
+    turnsApi.tree
+      .mockResolvedValueOnce({ turns: [] })
+      .mockResolvedValue({ turns: [failed] });
+    turnsApi.create.mockRejectedValue(new Error('API error: 502'));
+
+    renderPage();
+
+    const textarea = await screen.findByPlaceholderText(/type your message/i);
+    await userEvent.setup().type(textarea, 'initial prompt{Enter}');
+
+    await waitFor(() => {
+      expect(turnsApi.tree).toHaveBeenCalledTimes(2);
+    });
+    expect(
+      (await screen.findAllByText('initial prompt')).length,
+    ).toBeGreaterThan(0);
+    expect(
+      await screen.findByRole('button', { name: /retry/i }),
+    ).toBeInTheDocument();
+  });
+
   it('filters out failed turns that have a retry_turn_id', async () => {
     const replacement = makeTurn({
       id: 'new',

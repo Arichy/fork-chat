@@ -22,7 +22,31 @@ export const api = {
   },
 
   sessions: {
-    list: () => fetchApi<import('./types').Session[]>('/sessions'),
+    list: async (params?: {
+      limit?: number;
+      cursor?: import('./types').SessionsPageCursor | null;
+      sort?: import('./types').SessionsSort;
+      filter?: string;
+    }) => {
+      const search = new URLSearchParams();
+      if (params?.limit != null) {
+        search.set('limit', String(params.limit));
+      }
+      if (params?.cursor) {
+        search.set('before_at', params.cursor.before_at);
+        search.set('before_id', params.cursor.before_id);
+      }
+      if (params?.sort) {
+        search.set('sort', params.sort);
+      }
+      if (params?.filter != null && params.filter.trim().length > 0) {
+        search.set('filter', params.filter.trim());
+      }
+      const query = search.size > 0 ? `?${search.toString()}` : '';
+      return fetchApi<import('./types').SessionsPageResponse>(
+        `/sessions${query}`,
+      );
+    },
 
     get: (id: string) =>
       fetchApi<{ session: import('./types').Session }>(`/sessions/${id}`),

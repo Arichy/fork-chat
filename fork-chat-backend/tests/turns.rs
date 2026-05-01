@@ -331,6 +331,15 @@ async fn post_turn_persists_failed_status_when_openai_errors() {
     assert_eq!(row.0, "failed");
     assert!(row.1.is_some(), "error JSON should be populated");
 
+    // Even when the first turn fails, session should still be auto-titled from
+    // the first user message.
+    let title: Option<String> = sqlx::query_scalar("SELECT title FROM sessions WHERE id = $1")
+        .bind(session_id)
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(title.as_deref(), Some("hello"));
+
     app.cleanup().await;
 }
 

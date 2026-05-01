@@ -12,6 +12,12 @@ export function ChatPage() {
   const queryClient = useQueryClient();
   const { selectedTurnId, setSelectedTurn } = useChatStore();
   const [modalTurnId, setModalTurnId] = useState<string | null>(null);
+  const [pendingFailedTurn, setPendingFailedTurn] = useState<{
+    text: string;
+    provider: string;
+    model: string;
+    parentId: string | null;
+  } | null>(null);
 
   const {
     data: sessionData,
@@ -50,10 +56,19 @@ export function ChatPage() {
     onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ['tree', sessionId] });
       queryClient.invalidateQueries({ queryKey: ['sessions'] });
+      setPendingFailedTurn(null);
       setSelectedTurn(result.turn.id);
       setModalTurnId(null);
     },
-    onError: (error) => {
+    onError: (error, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['tree', sessionId] });
+      queryClient.invalidateQueries({ queryKey: ['sessions'] });
+      setPendingFailedTurn({
+        text: variables.text,
+        provider: variables.provider,
+        model: variables.model,
+        parentId: variables.parentId,
+      });
       toast.error(
         error instanceof Error ? error.message : 'Failed to send message',
       );
@@ -81,10 +96,36 @@ export function ChatPage() {
     ? (turns.find((t) => t.id === modalTurnId) ?? null)
     : null;
 
+  useEffect(() => {
+    if (!pendingFailedTurn) return;
+
+    const candidate = turns
+      .filter(
+        (turn) =>
+          turn.status === 'failed' &&
+          turn.retry_turn_id == null &&
+          turn.user_text === pendingFailedTurn.text &&
+          turn.provider === pendingFailedTurn.provider &&
+          turn.model === pendingFailedTurn.model &&
+          turn.parent_turn_id === pendingFailedTurn.parentId,
+      )
+      .sort(
+        (a, b) =>
+          new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+      )[0];
+
+    if (!candidate) return;
+
+    setSelectedTurn(candidate.id);
+    setModalTurnId(candidate.id);
+    setPendingFailedTurn(null);
+  }, [pendingFailedTurn, setSelectedTurn, turns]);
+
   // biome-ignore lint/correctness/useExhaustiveDependencies: sessionId is the reset trigger; its value is not needed inside the effect body.
   useEffect(() => {
     setSelectedTurn(null);
     setModalTurnId(null);
+    setPendingFailedTurn(null);
   }, [sessionId, setSelectedTurn]);
 
   const handleSelectTurn = useCallback(

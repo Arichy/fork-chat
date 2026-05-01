@@ -22,9 +22,42 @@ describe('api.config', () => {
 });
 
 describe('api.sessions', () => {
-  it('list() returns Session[]', async () => {
-    const sessions = await api.sessions.list();
-    expect(Array.isArray(sessions)).toBe(true);
+  it('list() returns paginated sessions + cursor', async () => {
+    const page = await api.sessions.list({ limit: 20 });
+    expect(Array.isArray(page.sessions)).toBe(true);
+    expect(page.next_cursor).toBeNull();
+  });
+
+  it('list() sends cursor query params', async () => {
+    let captured: Record<string, string> = {};
+    server.use(
+      http.get(`${API_BASE}/sessions`, ({ request }) => {
+        const url = new URL(request.url);
+        captured = Object.fromEntries(url.searchParams.entries());
+        return HttpResponse.json({
+          sessions: [],
+          next_cursor: null,
+        });
+      }),
+    );
+
+    await api.sessions.list({
+      limit: 25,
+      cursor: {
+        before_at: '2026-01-01T00:00:00Z',
+        before_id: '00000000-0000-0000-0000-000000000001',
+      },
+      sort: 'created_at',
+      filter: 'alpha',
+    });
+
+    expect(captured).toEqual({
+      limit: '25',
+      before_at: '2026-01-01T00:00:00Z',
+      before_id: '00000000-0000-0000-0000-000000000001',
+      sort: 'created_at',
+      filter: 'alpha',
+    });
   });
 
   it('get(id) fetches /sessions/:id', async () => {

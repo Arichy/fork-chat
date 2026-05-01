@@ -11,7 +11,7 @@ use crate::config::{AppState, Protocol};
 use crate::db::sessions::update_session_title;
 use crate::db::{
     UpdateTurnParams, create_turn, get_path_to_turn_in_session, get_session, get_session_tree,
-    get_turn_in_session, session_has_root_turn, update_turn,
+    get_turn_in_session, session_has_root_turn, touch_session_updated_at, update_turn,
 };
 use crate::error::AppError;
 use crate::llm::SendResult;
@@ -104,6 +104,10 @@ fn build_failed_turn_messages(protocol: Protocol, user_text: &str) -> JsonValue 
     ])
 }
 
+fn auto_title_from_user_text(user_text: &str) -> String {
+    user_text.chars().take(50).collect()
+}
+
 pub async fn create_turn_handler(
     State(state): State<AppState>,
     Path(session_id): Path<Uuid>,
@@ -135,6 +139,10 @@ pub async fn create_turn_handler(
     }
 
     let session = get_session(&state.db, session_id).await?;
+    let auto_title = session
+        .title
+        .is_none()
+        .then(|| auto_title_from_user_text(&req.user_text));
 
     let protocol = validate_dispatch(&state, session.protocol, &req.provider, &req.model)?;
     let adapter = state.registry.get(protocol, &req.provider).ok_or_else(|| {
@@ -153,6 +161,7 @@ pub async fn create_turn_handler(
         &req.user_text,
     )
     .await?;
+    let _ = touch_session_updated_at(&state.db, session_id).await;
 
     let history = get_path_to_turn_in_session(&state.db, session_id, req.parent_turn_id).await?;
     let instructions = session.system_prompt.as_deref();
@@ -194,13 +203,8 @@ pub async fn create_turn_handler(
             )
             .await?;
 
-            if session.title.is_none() {
-                let title = if req.user_text.len() > 50 {
-                    req.user_text[..50].to_string()
-                } else {
-                    req.user_text.clone()
-                };
-                update_session_title(&state.db, session_id, &title).await?;
+            if let Some(title) = &auto_title {
+                update_session_title(&state.db, session_id, title).await?;
             }
 
             Ok(Json(CreateTurnResponse { turn }))
@@ -227,6 +231,16 @@ pub async fn create_turn_handler(
                 },
             )
             .await;
+
+            if let Some(title) = &auto_title
+                && let Err(title_err) = update_session_title(&state.db, session_id, title).await
+            {
+                error!(
+                    "Failed to auto-title session {} after failed turn: {}",
+                    session_id, title_err
+                );
+            }
+
             Err(e)
         }
     }
@@ -286,6 +300,7 @@ pub async fn retry_turn_handler(
         &user_text,
     )
     .await?;
+    let _ = touch_session_updated_at(&state.db, session_id).await;
 
     let history =
         get_path_to_turn_in_session(&state.db, session_id, old_turn.parent_turn_id).await?;

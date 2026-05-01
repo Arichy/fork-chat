@@ -127,8 +127,8 @@ async fn list_sessions_orders_by_created_at_desc() {
     let second = app.create_session(None).await;
 
     let resp = app.http.get(app.url("/api/sessions")).send().await.unwrap();
-    let arr: Value = resp.json().await.unwrap();
-    let ids: Vec<String> = arr
+    let body: Value = resp.json().await.unwrap();
+    let ids: Vec<String> = body["sessions"]
         .as_array()
         .unwrap()
         .iter()
@@ -137,6 +137,195 @@ async fn list_sessions_orders_by_created_at_desc() {
     // Newest first.
     assert_eq!(ids[0], second.to_string());
     assert_eq!(ids[1], first.to_string());
+
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn list_sessions_supports_cursor_pagination() {
+    let app = spawn_app().await;
+    let first = app.create_session(None).await;
+    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    let second = app.create_session(None).await;
+    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    let third = app.create_session(None).await;
+
+    let first_page_resp = app
+        .http
+        .get(app.url("/api/sessions"))
+        .query(&[("limit", "2")])
+        .send()
+        .await
+        .unwrap();
+    assert!(first_page_resp.status().is_success());
+    let first_page: Value = first_page_resp.json().await.unwrap();
+    let first_page_sessions = first_page["sessions"].as_array().unwrap();
+    assert_eq!(first_page_sessions.len(), 2);
+    assert_eq!(first_page_sessions[0]["id"], third.to_string());
+    assert_eq!(first_page_sessions[1]["id"], second.to_string());
+
+    let cursor_created_at = first_page["next_cursor"]["before_at"].as_str().unwrap();
+    let cursor_id = first_page["next_cursor"]["before_id"].as_str().unwrap();
+
+    let second_page_resp = app
+        .http
+        .get(app.url("/api/sessions"))
+        .query(&[
+            ("limit", "2"),
+            ("before_at", cursor_created_at),
+            ("before_id", cursor_id),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert!(second_page_resp.status().is_success());
+    let second_page: Value = second_page_resp.json().await.unwrap();
+    let second_page_sessions = second_page["sessions"].as_array().unwrap();
+    assert_eq!(second_page_sessions.len(), 1);
+    assert_eq!(second_page_sessions[0]["id"], first.to_string());
+    assert!(second_page["next_cursor"].is_null());
+
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn list_sessions_rejects_partial_cursor() {
+    let app = spawn_app().await;
+    app.create_session(None).await;
+
+    let resp = app
+        .http
+        .get(app.url("/api/sessions"))
+        .query(&[("before_id", Uuid::new_v4().to_string())])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), reqwest::StatusCode::BAD_REQUEST);
+
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn list_sessions_defaults_to_updated_at_desc() {
+    let app = spawn_app().await;
+    let first = app.create_session(None).await;
+    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    let second = app.create_session(None).await;
+
+    // Touch the older session via a new turn so its updated_at becomes newest.
+    app.mock_openai_success("ping", "resp_sort_default").await;
+    let turn_resp = app
+        .http
+        .post(app.url(&format!("/api/sessions/{first}/turns")))
+        .json(&json!({
+            "user_text": "hello",
+            "provider": "openai",
+            "model": "gpt-5.4-mini",
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert!(turn_resp.status().is_success());
+
+    let resp = app.http.get(app.url("/api/sessions")).send().await.unwrap();
+    assert!(resp.status().is_success());
+    let body: Value = resp.json().await.unwrap();
+    let ids: Vec<String> = body["sessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["id"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(ids[0], first.to_string());
+    assert_eq!(ids[1], second.to_string());
+
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn list_sessions_supports_created_at_sort() {
+    let app = spawn_app().await;
+    let first = app.create_session(None).await;
+    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    let second = app.create_session(None).await;
+
+    app.mock_openai_success("touch", "resp_sort_created").await;
+    let _ = app
+        .http
+        .post(app.url(&format!("/api/sessions/{first}/turns")))
+        .json(&json!({
+            "user_text": "hello",
+            "provider": "openai",
+            "model": "gpt-5.4-mini",
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    let resp = app
+        .http
+        .get(app.url("/api/sessions"))
+        .query(&[("sort", "created_at")])
+        .send()
+        .await
+        .unwrap();
+    assert!(resp.status().is_success());
+    let body: Value = resp.json().await.unwrap();
+    let ids: Vec<String> = body["sessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["id"].as_str().unwrap().to_string())
+        .collect();
+    // Created_at desc should still keep newer-created session first.
+    assert_eq!(ids[0], second.to_string());
+    assert_eq!(ids[1], first.to_string());
+
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn list_sessions_filters_by_title() {
+    let app = spawn_app().await;
+    let first = app.create_session(None).await;
+    let second = app.create_session(None).await;
+    let third = app.create_session(None).await;
+
+    // Assign titles directly for filter assertions.
+    sqlx::query("UPDATE sessions SET title = $1 WHERE id = $2")
+        .bind("Project Alpha")
+        .bind(first)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE sessions SET title = $1 WHERE id = $2")
+        .bind("Alpha Followup")
+        .bind(second)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE sessions SET title = $1 WHERE id = $2")
+        .bind("Beta")
+        .bind(third)
+        .execute(&app.db)
+        .await
+        .unwrap();
+
+    let resp = app
+        .http
+        .get(app.url("/api/sessions"))
+        .query(&[("filter", "alpha")])
+        .send()
+        .await
+        .unwrap();
+    assert!(resp.status().is_success());
+    let body: Value = resp.json().await.unwrap();
+    let sessions = body["sessions"].as_array().unwrap();
+    assert_eq!(sessions.len(), 2);
+    for s in sessions {
+        let title = s["title"].as_str().unwrap().to_lowercase();
+        assert!(title.contains("alpha"));
+    }
 
     app.cleanup().await;
 }

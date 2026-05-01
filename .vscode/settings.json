@@ -18,7 +18,7 @@
     "editor.defaultFormatter": "biomejs.biome"
   },
   "[json]": {
-    "editor.defaultFormatter": "biomejs.biome"
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
   },
   "biome.configurationPath": "./fork-chat-frontend/biome.json",
   "biome.lsp.bin": "./fork-chat-frontend/node_modules/.bin/biome",

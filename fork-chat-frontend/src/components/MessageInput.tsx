@@ -32,7 +32,7 @@ type ProviderModelOption = {
   key: string;
   provider: string;
   modelId: string;
-  label: string;
+  modelName: string;
 };
 
 function flatten(
@@ -47,7 +47,7 @@ function flatten(
         key: `${p.name}|${m.id}`,
         provider: p.name,
         modelId: m.id,
-        label: `${p.name} · ${m.name ?? m.id}`,
+        modelName: m.name ?? m.id,
       });
     }
   }
@@ -115,32 +115,73 @@ export function MessageInput({
         onChange={(e) => setText(e.target.value)}
         onKeyDown={handleKeyDown}
         placeholder="Type your message..."
+        className="rounded-3xl bg-zinc-100/70 px-4 py-3.5 text-[15px] text-zinc-800 placeholder:text-zinc-500 focus-visible:border-zinc-400 focus-visible:ring-2 focus-visible:ring-zinc-300/60"
         disabled={disabled}
       />
-      <div className="flex gap-2">
+      <div className="flex items-center gap-2">
         <Select
           value={currentKey}
           onValueChange={(v) => setSelectedKey(v ?? '')}
           disabled={disabled || options.length === 0}
         >
-          <SelectTrigger className="flex-1">
+          <SelectTrigger className="h-10 flex-1 rounded-2xl border border-zinc-300 bg-white px-3.5 shadow-sm transition-colors hover:border-zinc-400 data-[popup-open]:border-zinc-400 data-[popup-open]:bg-zinc-50 focus-visible:border-zinc-500 focus-visible:ring-2 focus-visible:ring-zinc-300/70">
             <SelectValue
+              className="sr-only"
               placeholder={
                 options.length === 0
                   ? `No providers configured for protocol "${protocol}"`
                   : 'Select provider / model'
               }
             />
+            {current ? (
+              <span
+                aria-hidden
+                className="flex min-w-0 flex-1 items-center gap-2 text-left"
+              >
+                <span className="rounded-md border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 text-[10px] font-semibold leading-none tracking-wide text-zinc-500 uppercase">
+                  {current.provider}
+                </span>
+                <span className="truncate text-sm font-semibold text-zinc-800">
+                  {current.modelName}
+                </span>
+              </span>
+            ) : (
+              <span aria-hidden className="truncate text-sm text-zinc-500">
+                {options.length === 0
+                  ? `No providers configured for protocol "${protocol}"`
+                  : 'Select provider / model'}
+              </span>
+            )}
           </SelectTrigger>
-          <SelectContent>
+          <SelectContent
+            sideOffset={8}
+            align="start"
+            alignItemWithTrigger={false}
+            className="w-[--anchor-width] min-w-[--anchor-width] rounded-2xl border border-zinc-200 bg-white p-1 shadow-xl shadow-zinc-900/10"
+          >
             {options.map((opt) => (
-              <SelectItem key={opt.key} value={opt.key}>
-                {opt.label}
+              <SelectItem
+                key={opt.key}
+                value={opt.key}
+                className="rounded-xl px-3 py-2.5 data-[highlighted]:bg-zinc-100 data-[highlighted]:!text-zinc-900 data-[selected]:bg-zinc-100 data-[selected]:!text-zinc-900 focus:bg-zinc-100 focus:!text-zinc-900"
+              >
+                <span className="flex min-w-0 flex-col">
+                  <span className="truncate pr-5 text-sm font-semibold leading-tight text-zinc-900">
+                    {opt.modelName}
+                  </span>
+                  <span className="mt-0.5 truncate pr-5 text-[11px] font-medium text-zinc-500">
+                    {opt.provider}
+                  </span>
+                </span>
               </SelectItem>
             ))}
           </SelectContent>
         </Select>
-        <Button type="submit" disabled={disabled || !text.trim() || !current}>
+        <Button
+          type="submit"
+          disabled={disabled || !text.trim() || !current}
+          className="h-10 rounded-2xl px-5 font-semibold"
+        >
           Send
         </Button>
       </div>

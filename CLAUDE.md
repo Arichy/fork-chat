@@ -35,3 +35,7 @@ Backend (`fork-chat-backend`):
 # Tests
 
 Write detailed test cases after feature implementation or bug fix if possible.
+
+# No backward compatibility
+
+This project is currently in early development stage, so breaking changes are **encouraged** if they're better.
