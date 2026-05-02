@@ -5,6 +5,11 @@ mod handlers;
 mod llm;
 mod models;
 mod routes;
+mod tooling;
+mod turn_lifecycle;
+mod turn_runtime;
+mod turn_stream;
+mod turn_task_manager;
 
 use std::net::SocketAddr;
 use tower_http::cors::{Any, CorsLayer};
@@ -27,6 +32,10 @@ async fn main() -> eyre::Result<()> {
 
     let db = db::create_pool(&config.database_url).await?;
     tracing::info!("Connected to database");
+    let abandoned = db::turns::fail_abandoned_turns(&db).await?;
+    if abandoned > 0 {
+        tracing::warn!("Marked {} abandoned turns as failed", abandoned);
+    }
 
     let addr: SocketAddr = config.server_addr.parse()?;
     let state = AppState::new(db, config);

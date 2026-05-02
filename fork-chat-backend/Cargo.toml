@@ -6,12 +6,15 @@ edition = "2024"
 [dependencies]
 axum = "0.8.9"
 tokio = { version = "1.52.1", features = ["full"] }
+tokio-util = "0.7"
 tower-http = { version = "0.6.8", features = ["cors", "trace"] }
 
 async-openai = { version = "0.35.0", features = ["responses"] }
 async-trait = "0.1.83"
 backoff = "0.4"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+async-stream = "0.3"
+futures-core = "0.3"
 
 sqlx = { version = "0.8.6", features = ["runtime-tokio", "postgres", "uuid", "chrono", "json"] }
 

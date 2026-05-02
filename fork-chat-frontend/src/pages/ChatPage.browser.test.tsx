@@ -23,6 +23,11 @@ const CONFIG: ConfigResponse = {
       models: [{ id: 'gpt-5.4-mini', name: 'GPT-5.4 Mini' }],
     },
   ],
+  tools: [
+    { name: 'read', description: 'read', default_policy: 'auto' },
+    { name: 'write', description: 'write', default_policy: 'require_approval' },
+    { name: 'bash', description: 'bash', default_policy: 'require_approval' },
+  ],
 };
 
 // Use vi.hoisted so these mocks are available when vi.mock's factory runs
@@ -31,6 +36,8 @@ const { turnsApi, sessionsApi, configGet } = vi.hoisted(() => ({
   turnsApi: {
     create: vi.fn(),
     retry: vi.fn(),
+    approve: vi.fn(),
+    cancel: vi.fn(),
     tree: vi.fn(),
     get: vi.fn(),
   },
@@ -66,6 +73,8 @@ describe('ChatPage', () => {
   beforeEach(() => {
     turnsApi.create.mockReset();
     turnsApi.retry.mockReset();
+    turnsApi.approve.mockReset();
+    turnsApi.cancel.mockReset();
     turnsApi.tree.mockReset();
     turnsApi.get.mockReset();
     sessionsApi.get.mockReset();

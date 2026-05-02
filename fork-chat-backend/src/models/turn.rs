@@ -3,7 +3,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use uuid::Uuid;
 
-#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
+use crate::turn_runtime::TurnRuntimeState;
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Turn {
     pub id: Uuid,
     pub session_id: Uuid,
@@ -21,7 +23,8 @@ pub struct Turn {
     pub output_tokens: Option<i32>,
     pub cached_tokens: Option<i32>,
     pub error: Option<JsonValue>,
-    pub metadata: JsonValue,
+    #[sqlx(json)]
+    pub runtime_state: TurnRuntimeState,
     pub created_at: DateTime<Utc>,
     pub completed_at: Option<DateTime<Utc>>,
 }

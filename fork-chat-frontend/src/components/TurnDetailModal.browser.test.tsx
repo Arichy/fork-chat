@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import type { ConfigResponse, Protocol, Turn } from '../api/types';
@@ -15,6 +15,15 @@ const { CONFIG } = vi.hoisted(() => {
         supported_protocols: ['openai'],
         models: [{ id: 'gpt-5.4-mini', name: 'GPT-5.4 Mini' }],
       },
+    ],
+    tools: [
+      { name: 'read', description: 'read', default_policy: 'auto' },
+      {
+        name: 'write',
+        description: 'write',
+        default_policy: 'require_approval',
+      },
+      { name: 'bash', description: 'bash', default_policy: 'require_approval' },
     ],
   };
   return { CONFIG };
@@ -37,6 +46,12 @@ function renderModal(props: {
   onOpenChange?: (v: boolean) => void;
   onSend?: (t: string, provider: string, m: string, pid: string | null) => void;
   onRetry?: (id: string, provider: string, model: string) => void;
+  onApprove?: (
+    turnId: string,
+    pendingCallId: string,
+    decision: 'allow' | 'allow_always' | 'deny',
+  ) => void;
+  onCancel?: (turnId: string) => void;
   isSending?: boolean;
 }) {
   const client = new QueryClient({
@@ -52,6 +67,8 @@ function renderModal(props: {
         onOpenChange={props.onOpenChange ?? vi.fn()}
         onSend={props.onSend ?? vi.fn()}
         onRetry={props.onRetry ?? vi.fn()}
+        onApprove={props.onApprove ?? vi.fn()}
+        onCancel={props.onCancel ?? vi.fn()}
         isSending={props.isSending ?? false}
       />
     </QueryClientProvider>,
@@ -129,6 +146,8 @@ describe('TurnDetailModal', () => {
           onOpenChange={vi.fn()}
           onSend={vi.fn()}
           onRetry={vi.fn()}
+          onApprove={vi.fn()}
+          onCancel={vi.fn()}
           isSending={false}
         />
       </QueryClientProvider>,
@@ -156,5 +175,113 @@ describe('TurnDetailModal', () => {
       open: true,
     });
     expect(screen.getByText(/network_error/)).toBeInTheDocument();
+  });
+
+  it('renders approval actions inside the matching tool call card', async () => {
+    const onApprove = vi.fn();
+    const turn = makeTurn({
+      id: 'await-1',
+      status: 'awaiting_approval',
+      turn_messages: [
+        {
+          role: 'assistant',
+          content: [
+            {
+              type: 'function_call',
+              id: 'fc_1',
+              call_id: 'toolu_1',
+              name: 'write',
+              arguments: '{"path":"a.txt","content":"x"}',
+            },
+          ],
+        },
+      ],
+      runtime_state: {
+        pending_tool_calls: [
+          {
+            pending_call_id: 'pcall_1',
+            call_id: 'toolu_1',
+            name: 'write',
+            input: { path: 'a.txt', content: 'x' },
+          },
+        ],
+      },
+    });
+    renderModal({ turn, open: true, onApprove });
+
+    const toolCard = await screen.findByTestId('tool-call-card');
+    const inputDetails = within(toolCard).getByText('Input').closest('details');
+    expect(inputDetails).toHaveAttribute('open');
+    expect(screen.queryByText('write • pcall_1')).not.toBeInTheDocument();
+
+    const allowBtn = within(toolCard).getByRole('button', { name: 'Allow' });
+    await userEvent.setup().click(allowBtn);
+    expect(onApprove).toHaveBeenCalledWith('await-1', 'pcall_1', 'allow');
+  });
+
+  it('renders trace immediately when transcript is present', () => {
+    const turn = makeTurn({
+      turn_messages: [
+        {
+          role: 'user',
+          content: [{ type: 'text', text: 'hello from transcript' }],
+        },
+        {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'assistant from transcript' }],
+        },
+      ],
+      user_text: 'fallback user text',
+      assistant_text: 'fallback assistant text',
+    });
+
+    renderModal({ turn, open: true });
+
+    expect(screen.getByText('Trace')).toBeInTheDocument();
+    expect(screen.getByText('assistant from transcript')).toBeInTheDocument();
+  });
+
+  it('renders OpenAI-style user transcript entries as user text cards', () => {
+    const turn = makeTurn({
+      turn_messages: [
+        {
+          role: 'user',
+          content: [{ role: 'user', content: 'hello from openai transcript' }],
+        },
+      ],
+      user_text: 'fallback user text',
+    });
+
+    renderModal({ turn, open: true });
+
+    expect(screen.getByText('Trace')).toBeInTheDocument();
+    expect(
+      screen.getByText('hello from openai transcript'),
+    ).toBeInTheDocument();
+  });
+
+  it('renders large tool output as truncated preview text', async () => {
+    const hugeOutput = 'x'.repeat(10_000);
+    const turn = makeTurn({
+      turn_messages: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'function_call_output',
+              call_id: 'call_1',
+              output: hugeOutput,
+            },
+          ],
+        },
+      ],
+    });
+
+    renderModal({ turn, open: true });
+
+    expect(screen.getByText('Tool result')).toBeInTheDocument();
+    expect(
+      screen.getByText(/\[preview truncated for performance\]/i),
+    ).toBeInTheDocument();
   });
 });

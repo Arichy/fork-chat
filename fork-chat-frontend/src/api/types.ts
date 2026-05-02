@@ -1,3 +1,5 @@
+import type { TurnStatus } from './turnStream';
+
 export type Protocol = 'openai' | 'anthropic';
 
 /** A single model exposed by a provider. `name` is an optional display label. */
@@ -15,6 +17,13 @@ export interface PublicProvider {
 export interface ConfigResponse {
   protocols: Protocol[];
   providers: PublicProvider[];
+  tools: PublicTool[];
+}
+
+export interface PublicTool {
+  name: string;
+  description: string;
+  default_policy: 'auto' | 'require_approval';
 }
 
 export interface Session {
@@ -23,7 +32,7 @@ export interface Session {
   system_prompt: string | null;
   /** Wire protocol chosen at session creation. Locked for the session's lifetime. */
   protocol: Protocol;
-  metadata: Record<string, unknown>;
+  preferences: Record<string, unknown>;
   created_at: string;
   updated_at: string;
 }
@@ -33,7 +42,7 @@ export interface Turn {
   session_id: string;
   parent_turn_id: string | null;
   retry_turn_id: string | null;
-  status: 'running' | 'completed' | 'failed';
+  status: TurnStatus;
   user_text: string | null;
   assistant_text: string | null;
   turn_messages: unknown[];
@@ -43,7 +52,7 @@ export interface Turn {
   output_tokens: number | null;
   cached_tokens: number | null;
   error: Record<string, unknown> | null;
-  metadata: Record<string, unknown>;
+  runtime_state: Record<string, unknown>;
   created_at: string;
   completed_at: string | null;
 }
@@ -82,4 +91,13 @@ export interface CreateTurnResponse {
 
 export interface TreeResponse {
   turns: Turn[];
+}
+
+export type ApproveDecisionKind = 'allow' | 'allow_always' | 'deny';
+
+export interface ApproveTurnRequest {
+  decisions: Array<{
+    pending_call_id: string;
+    decision: ApproveDecisionKind;
+  }>;
 }

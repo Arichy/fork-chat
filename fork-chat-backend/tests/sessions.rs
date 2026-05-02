@@ -226,6 +226,9 @@ async fn list_sessions_defaults_to_updated_at_desc() {
         .await
         .unwrap();
     assert!(turn_resp.status().is_success());
+    let turn_body: Value = turn_resp.json().await.unwrap();
+    let turn_id = Uuid::parse_str(turn_body["turn"]["id"].as_str().unwrap()).unwrap();
+    let _ = app.wait_turn_status(first, turn_id, &["completed"]).await;
 
     let resp = app.http.get(app.url("/api/sessions")).send().await.unwrap();
     assert!(resp.status().is_success());
@@ -250,7 +253,7 @@ async fn list_sessions_supports_created_at_sort() {
     let second = app.create_session(None).await;
 
     app.mock_openai_success("touch", "resp_sort_created").await;
-    let _ = app
+    let turn_resp = app
         .http
         .post(app.url(&format!("/api/sessions/{first}/turns")))
         .json(&json!({
@@ -261,6 +264,10 @@ async fn list_sessions_supports_created_at_sort() {
         .send()
         .await
         .unwrap();
+    assert!(turn_resp.status().is_success());
+    let turn_body: Value = turn_resp.json().await.unwrap();
+    let turn_id = Uuid::parse_str(turn_body["turn"]["id"].as_str().unwrap()).unwrap();
+    let _ = app.wait_turn_status(first, turn_id, &["completed"]).await;
 
     let resp = app
         .http
@@ -420,6 +427,9 @@ async fn delete_session_cascades_to_turns() {
         .await
         .unwrap();
     assert!(turn_resp.status().is_success());
+    let turn_body: Value = turn_resp.json().await.unwrap();
+    let turn_id = Uuid::parse_str(turn_body["turn"]["id"].as_str().unwrap()).unwrap();
+    let _ = app.wait_turn_status(id, turn_id, &["completed"]).await;
 
     let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM turns WHERE session_id = $1")
         .bind(id)

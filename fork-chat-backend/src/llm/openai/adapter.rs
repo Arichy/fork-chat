@@ -7,7 +7,8 @@ use std::time::Duration;
 use async_openai::Client;
 use async_openai::config::OpenAIConfig;
 use async_openai::types::responses::{
-    CreateResponse, InputItem, InputParam, OutputItem, OutputMessageContent, Response,
+    CreateResponse, FunctionTool, InputItem, InputParam, OutputItem, OutputMessageContent,
+    Response, Tool,
 };
 use async_trait::async_trait;
 use backoff::ExponentialBackoffBuilder;
@@ -17,6 +18,7 @@ use tracing::debug;
 use crate::error::AppError;
 use crate::llm::{ChatAdapter, SendResult};
 use crate::models::Turn;
+use crate::tooling::tool_definitions;
 
 use super::message_builder::build_input_items;
 
@@ -51,10 +53,25 @@ impl OpenaiAdapter {
         model: &str,
         instructions: Option<&str>,
     ) -> Result<Response, AppError> {
+        let tools: Vec<Tool> = tool_definitions()
+            .into_iter()
+            .map(|tool| {
+                Tool::Function(FunctionTool {
+                    name: tool.name.to_string(),
+                    parameters: Some(tool.input_schema),
+                    strict: Some(true),
+                    description: Some(tool.description.to_string()),
+                    defer_loading: None,
+                })
+            })
+            .collect();
+
         let request = CreateResponse {
             input: InputParam::Items(input),
             model: Some(model.to_string()),
             instructions: instructions.map(|s| s.to_string()),
+            tools: Some(tools),
+            parallel_tool_calls: Some(true),
             ..Default::default()
         };
 
@@ -102,7 +119,7 @@ impl ChatAdapter for OpenaiAdapter {
     async fn send(
         &self,
         history: &[Turn],
-        new_user_text: &str,
+        new_user_text: Option<&str>,
         model: &str,
         instructions: Option<&str>,
     ) -> Result<SendResult, AppError> {

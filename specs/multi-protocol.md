@@ -18,6 +18,8 @@ for the lifetime of the session tree.
   - `(session.protocol, request.provider, request.model)`
 - A provider/model can vary turn-by-turn, but it must remain valid for the
   session protocol.
+- Tool-loop semantics (multi-round transcript, approvals, stream events) are
+  protocol-agnostic and shared by both OpenAI and Anthropic adapters.
 
 This keeps all replay data in one native wire format and avoids cross-protocol
 translation.
@@ -86,10 +88,10 @@ Validation guarantees:
 
 - `turn_messages JSONB NOT NULL DEFAULT '[]'`
 
-`turn_messages` stores per-turn ordered messages plus assistant metadata for
-replay/audit.
+`turn_messages` stores per-turn ordered transcript entries plus metadata needed
+for replay/audit.
 
-Current shape for a successful turn:
+Current shape is append-only and may contain many rounds in one turn:
 
 ```json
 [
@@ -101,16 +103,21 @@ Current shape for a successful turn:
     "role": "assistant",
     "content": "<protocol-native assistant content array>",
     "response_id": "...",
-    "stop_reason": "... or null",
-    "usage": { "...": "..." },
-    "raw_response": { "...": "full upstream response" }
+    "stop_reason": "tool_use or end_turn",
+    "usage": { "...": "..." }
+  },
+  {
+    "role": "user",
+    "content": "<tool_result / function_call_output blocks>"
   }
 ]
 ```
 
 Notes:
 
-- For failed turns, we currently persist only the user entry.
+- A single turn can append multiple assistant/tool-result entries before
+  reaching a terminal status.
+- Failed turns still preserve already-appended transcript history.
 - `assistant_text` remains a display/search convenience field.
 - `turn_messages` is the source of truth for wire replay.
 
@@ -225,6 +232,10 @@ Anthropic turn example (assistant `content` is `response.content` blocks):
 - Model dropdown is filtered by selected provider.
 - When replying to a parent turn, the default model now inherits from the
   parent turn's model.
+- Turn detail rendering must support mixed transcript blocks (text/tool_use/
+  tool_result/function_call/function_call_output), not just user/assistant text.
+- Turn progress is consumed from per-turn SSE stream (`turn_snapshot` + live
+  append events).
 
 ## Test Coverage
 
@@ -250,7 +261,7 @@ Frontend:
 
 - protocol switching in an existing session
 - cross-protocol message translation
-- streaming parity work
+- token-level streaming parity work
 
 ## Pre-Commit Gate
 

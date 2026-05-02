@@ -4,6 +4,8 @@ use serde::Serialize;
 
 use crate::config::AppState;
 use crate::config::{ModelConfig, Protocol};
+use crate::tooling::PublicTool;
+use crate::tooling::public_tools;
 
 #[derive(Debug, Serialize)]
 pub struct PublicProvider {
@@ -16,6 +18,7 @@ pub struct PublicProvider {
 pub struct ConfigResponse {
     pub protocols: Vec<&'static str>,
     pub providers: Vec<PublicProvider>,
+    pub tools: Vec<PublicTool>,
 }
 
 pub async fn get_config_handler(State(state): State<AppState>) -> Json<ConfigResponse> {
@@ -37,5 +40,6 @@ pub async fn get_config_handler(State(state): State<AppState>) -> Json<ConfigRes
     Json(ConfigResponse {
         protocols: vec![Protocol::Openai.as_str(), Protocol::Anthropic.as_str()],
         providers,
+        tools: public_tools(),
     })
 }

@@ -1,7 +1,11 @@
 mod common;
 
 use common::spawn_app;
+use fork_chat_backend::turn_runtime::stream_event;
+use fork_chat_backend::turn_stream::TurnStreamEvent;
 use serde_json::{Value, json};
+use std::time::Duration;
+use tokio::time::sleep;
 use uuid::Uuid;
 
 #[tokio::test]
@@ -24,8 +28,11 @@ async fn post_turn_success_completes_and_auto_titles_session() {
         .unwrap();
     assert!(resp.status().is_success(), "status={}", resp.status());
 
-    let body: Value = resp.json().await.unwrap();
-    assert_eq!(body["turn"]["status"], "completed");
+    let created: Value = resp.json().await.unwrap();
+    let turn_id = Uuid::parse_str(created["turn"]["id"].as_str().unwrap()).unwrap();
+    let body = app
+        .wait_turn_status(session_id, turn_id, &["completed"])
+        .await;
     assert_eq!(body["turn"]["assistant_text"], "Hello from assistant");
     assert_eq!(body["turn"]["response_id"], "resp_ok");
     assert_eq!(body["turn"]["input_tokens"], 10);
@@ -66,6 +73,11 @@ async fn post_turn_rejects_second_root() {
         .await
         .unwrap();
     assert!(first.status().is_success());
+    let first_body: Value = first.json().await.unwrap();
+    let first_turn_id = Uuid::parse_str(first_body["turn"]["id"].as_str().unwrap()).unwrap();
+    let _ = app
+        .wait_turn_status(session_id, first_turn_id, &["completed"])
+        .await;
 
     let second = app
         .http
@@ -126,6 +138,14 @@ async fn post_turn_accepts_fork_from_existing_parent() {
     assert!(fork.status().is_success());
     let fork_body: Value = fork.json().await.unwrap();
     assert_eq!(fork_body["turn"]["parent_turn_id"], parent_id);
+    let first_turn_id = Uuid::parse_str(first_body["turn"]["id"].as_str().unwrap()).unwrap();
+    let fork_turn_id = Uuid::parse_str(fork_body["turn"]["id"].as_str().unwrap()).unwrap();
+    let _ = app
+        .wait_turn_status(session_id, first_turn_id, &["completed"])
+        .await;
+    let _ = app
+        .wait_turn_status(session_id, fork_turn_id, &["completed"])
+        .await;
 
     app.cleanup().await;
 }
@@ -153,6 +173,10 @@ async fn post_turn_rejects_parent_from_another_session() {
         .await
         .unwrap();
     let foreign_parent_id = root["turn"]["id"].as_str().unwrap();
+    let root_turn_id = Uuid::parse_str(foreign_parent_id).unwrap();
+    let _ = app
+        .wait_turn_status(first_session, root_turn_id, &["completed"])
+        .await;
 
     let resp = app
         .http
@@ -319,7 +343,11 @@ async fn post_turn_persists_failed_status_when_openai_errors() {
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status(), reqwest::StatusCode::BAD_GATEWAY);
+    assert!(resp.status().is_success(), "status={}", resp.status());
+    let created: Value = resp.json().await.unwrap();
+    let turn_id = Uuid::parse_str(created["turn"]["id"].as_str().unwrap()).unwrap();
+    let turn = app.wait_turn_status(session_id, turn_id, &["failed"]).await;
+    assert_eq!(turn["turn"]["status"], "failed");
 
     // The handler should have persisted a failed turn record.
     let row: (String, Option<Value>) =
@@ -363,14 +391,16 @@ async fn retry_succeeds_and_links_old_turn() {
         .send()
         .await
         .unwrap();
-    assert_eq!(fail_resp.status(), reqwest::StatusCode::BAD_GATEWAY);
-
-    // Fetch the failed turn id from the DB.
-    let failed_id: Uuid = sqlx::query_scalar("SELECT id FROM turns WHERE session_id = $1")
-        .bind(session_id)
-        .fetch_one(&app.db)
-        .await
-        .unwrap();
+    assert!(
+        fail_resp.status().is_success(),
+        "status={}",
+        fail_resp.status()
+    );
+    let failed_body: Value = fail_resp.json().await.unwrap();
+    let failed_id = Uuid::parse_str(failed_body["turn"]["id"].as_str().unwrap()).unwrap();
+    let _ = app
+        .wait_turn_status(session_id, failed_id, &["failed"])
+        .await;
 
     // Reset and install a success mock for the retry call.
     app.openai.reset().await;
@@ -390,9 +420,11 @@ async fn retry_succeeds_and_links_old_turn() {
         .unwrap();
     assert!(retry.status().is_success(), "status={}", retry.status());
     let body: Value = retry.json().await.unwrap();
-    let new_id = body["turn"]["id"].as_str().unwrap().to_string();
-    assert_eq!(body["turn"]["status"], "completed");
-    assert_eq!(body["turn"]["assistant_text"], "retry worked");
+    let new_id = Uuid::parse_str(body["turn"]["id"].as_str().unwrap()).unwrap();
+    let completed = app
+        .wait_turn_status(session_id, new_id, &["completed"])
+        .await;
+    assert_eq!(completed["turn"]["assistant_text"], "retry worked");
 
     // Old failed turn should now have retry_turn_id == new_id.
     let link: Option<Uuid> = sqlx::query_scalar("SELECT retry_turn_id FROM turns WHERE id = $1")
@@ -400,7 +432,7 @@ async fn retry_succeeds_and_links_old_turn() {
         .fetch_one(&app.db)
         .await
         .unwrap();
-    assert_eq!(link.map(|u| u.to_string()), Some(new_id));
+    assert_eq!(link, Some(new_id));
 
     app.cleanup().await;
 }
@@ -465,13 +497,14 @@ async fn retry_double_failure_still_links_turns() {
         .send()
         .await
         .unwrap();
-    assert_eq!(fail_resp.status(), reqwest::StatusCode::BAD_GATEWAY);
-
-    let old_id: Uuid = sqlx::query_scalar("SELECT id FROM turns WHERE session_id = $1")
-        .bind(session_id)
-        .fetch_one(&app.db)
-        .await
-        .unwrap();
+    assert!(
+        fail_resp.status().is_success(),
+        "status={}",
+        fail_resp.status()
+    );
+    let failed_body: Value = fail_resp.json().await.unwrap();
+    let old_id = Uuid::parse_str(failed_body["turn"]["id"].as_str().unwrap()).unwrap();
+    let _ = app.wait_turn_status(session_id, old_id, &["failed"]).await;
 
     let retry = app
         .http
@@ -483,7 +516,12 @@ async fn retry_double_failure_still_links_turns() {
         .send()
         .await
         .unwrap();
-    assert_eq!(retry.status(), reqwest::StatusCode::BAD_GATEWAY);
+    assert!(retry.status().is_success(), "status={}", retry.status());
+    let retry_body: Value = retry.json().await.unwrap();
+    let retry_id = Uuid::parse_str(retry_body["turn"]["id"].as_str().unwrap()).unwrap();
+    let _ = app
+        .wait_turn_status(session_id, retry_id, &["failed"])
+        .await;
 
     // Two turns exist, old one linked to the new (also failed) one.
     let turns: Vec<(Uuid, String, Option<Uuid>)> = sqlx::query_as(
@@ -531,6 +569,236 @@ async fn retry_rejects_provider_not_on_session_protocol() {
         .await
         .unwrap();
     assert_eq!(resp.status(), reqwest::StatusCode::BAD_REQUEST);
+
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn openai_tool_result_is_sent_back_and_turn_reaches_final_answer() {
+    let app = spawn_app().await;
+    let session_id = app.create_session(None).await;
+
+    app.mock_openai_tool_call(
+        "resp_tool",
+        "fc_read_1",
+        "read",
+        "{\"path\":\"./Cargo.toml\"}",
+    )
+    .await;
+    app.mock_openai_success_after_function_output("Done after tool call.", "resp_done")
+        .await;
+
+    let create = app
+        .http
+        .post(app.url(&format!("/api/sessions/{session_id}/turns")))
+        .json(&json!({
+            "user_text": "看看当前目录的项目配置",
+            "provider": "openai",
+            "model": "gpt-5.4-mini",
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert!(create.status().is_success(), "status={}", create.status());
+    let created: Value = create.json().await.unwrap();
+    let turn_id = Uuid::parse_str(created["turn"]["id"].as_str().unwrap()).unwrap();
+
+    let completed = app
+        .wait_turn_status(session_id, turn_id, &["completed"])
+        .await;
+    assert_eq!(completed["turn"]["assistant_text"], "Done after tool call.");
+    let msgs = completed["turn"]["turn_messages"].as_array().unwrap();
+    assert!(msgs.iter().any(|m| {
+        m["role"] == "user"
+            && m["content"]
+                .as_array()
+                .is_some_and(|arr| arr.iter().any(|b| b["type"] == "function_call_output"))
+    }));
+    assert!(msgs.iter().any(|m| {
+        m["role"] == "assistant"
+            && m["content"].as_array().is_some_and(|arr| {
+                arr.iter()
+                    .any(|b| b["type"] == "message" || b["type"] == "function_call")
+            })
+    }));
+
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn cancel_during_inflight_openai_call_stays_failed() {
+    let app = spawn_app().await;
+    let session_id = app.create_session(None).await;
+
+    app.mock_openai_delayed_success(
+        "this answer should be dropped by cancellation",
+        "resp_delayed",
+        Duration::from_millis(800),
+    )
+    .await;
+
+    let create = app
+        .http
+        .post(app.url(&format!("/api/sessions/{session_id}/turns")))
+        .json(&json!({
+            "user_text": "please run slowly",
+            "provider": "openai",
+            "model": "gpt-5.4-mini",
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert!(create.status().is_success(), "status={}", create.status());
+    let created: Value = create.json().await.unwrap();
+    let turn_id = Uuid::parse_str(created["turn"]["id"].as_str().unwrap()).unwrap();
+
+    // Give the loop a short head start so the delayed upstream request is
+    // definitely in-flight when cancel arrives.
+    sleep(Duration::from_millis(120)).await;
+
+    let cancel = app
+        .http
+        .post(app.url(&format!(
+            "/api/sessions/{session_id}/turns/{turn_id}/cancel"
+        )))
+        .send()
+        .await
+        .unwrap();
+    assert!(cancel.status().is_success(), "status={}", cancel.status());
+    let cancelled: Value = cancel.json().await.unwrap();
+    assert_eq!(cancelled["turn"]["status"], "failed");
+    assert_eq!(cancelled["turn"]["error"]["kind"], "cancelled");
+
+    // Wait long enough for the delayed upstream response to arrive. If
+    // cancellation is not sticky, stale loop writes may incorrectly overwrite
+    // this row back to running/completed.
+    sleep(Duration::from_millis(1200)).await;
+    let latest = app.get_turn(session_id, turn_id).await;
+    assert_eq!(latest["turn"]["status"], "failed");
+    assert_eq!(latest["turn"]["error"]["kind"], "cancelled");
+
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn terminal_turn_stream_returns_snapshot_only() {
+    let app = spawn_app().await;
+    let session_id = app.create_session(None).await;
+
+    let turn_id: Uuid = sqlx::query_scalar(
+        r#"
+        INSERT INTO turns (session_id, status, user_text, turn_messages, runtime_state, completed_at)
+        VALUES ($1, 'completed', 'done', '[]'::jsonb, $2, now())
+        RETURNING id
+        "#,
+    )
+    .bind(session_id)
+    .bind(json!({ "stream_seq": 7 }))
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+
+    let response = app
+        .http
+        .get(app.url(&format!(
+            "/api/sessions/{session_id}/turns/{turn_id}/stream"
+        )))
+        .send()
+        .await
+        .unwrap();
+    assert!(
+        response.status().is_success(),
+        "status={}",
+        response.status()
+    );
+    let body = response.text().await.unwrap();
+
+    assert_eq!(body.matches("event: ").count(), 1, "body={body}");
+    assert!(body.contains("event: turn_snapshot"), "body={body}");
+    assert!(body.contains(r#""seq":7"#), "body={body}");
+    assert!(!body.contains("event: turn_completed"), "body={body}");
+
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn stream_only_forwards_live_events_newer_than_snapshot_seq() {
+    let app = spawn_app().await;
+    let session_id = app.create_session(None).await;
+
+    let turn_id: Uuid = sqlx::query_scalar(
+        r#"
+        INSERT INTO turns (session_id, status, user_text, turn_messages, runtime_state)
+        VALUES ($1, 'running', 'stream me', '[]'::jsonb, $2)
+        RETURNING id
+        "#,
+    )
+    .bind(session_id)
+    .bind(json!({ "stream_seq": 3 }))
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+
+    let response = app
+        .http
+        .get(app.url(&format!(
+            "/api/sessions/{session_id}/turns/{turn_id}/stream"
+        )))
+        .send()
+        .await
+        .unwrap();
+    assert!(
+        response.status().is_success(),
+        "status={}",
+        response.status()
+    );
+
+    let hub = app.turn_stream_hub.clone();
+    tokio::spawn(async move {
+        sleep(Duration::from_millis(50)).await;
+        hub.publish(
+            turn_id,
+            TurnStreamEvent {
+                seq: 3,
+                event: stream_event::ROUND_STARTED.to_string(),
+                payload: json!({ "round": 0 }),
+            },
+        )
+        .await;
+        hub.publish(
+            turn_id,
+            TurnStreamEvent {
+                seq: 4,
+                event: stream_event::ROUND_STARTED.to_string(),
+                payload: json!({ "round": 1 }),
+            },
+        )
+        .await;
+        hub.publish(
+            turn_id,
+            TurnStreamEvent {
+                seq: 5,
+                event: stream_event::TURN_FAILED.to_string(),
+                payload: json!({ "error": { "kind": "test_terminal" } }),
+            },
+        )
+        .await;
+    });
+
+    let body = response.text().await.unwrap();
+    assert!(body.contains("event: turn_snapshot"), "body={body}");
+    assert_eq!(
+        body.matches("event: round_started").count(),
+        1,
+        "body={body}"
+    );
+    assert!(body.contains(r#""seq":4"#), "body={body}");
+    assert!(body.contains(r#""seq":5"#), "body={body}");
+    assert!(
+        !body.contains(r#""seq":3,"payload":{"round":0}"#),
+        "body={body}"
+    );
+    assert!(body.contains("event: turn_failed"), "body={body}");
 
     app.cleanup().await;
 }

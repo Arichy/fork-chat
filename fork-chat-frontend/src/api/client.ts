@@ -82,6 +82,9 @@ export const api = {
         `/sessions/${sessionId}/turns/${turnId}`,
       ),
 
+    streamUrl: (sessionId: string, turnId: string) =>
+      `${API_BASE}/sessions/${sessionId}/turns/${turnId}/stream`,
+
     retry: (
       sessionId: string,
       turnId: string,
@@ -90,6 +93,22 @@ export const api = {
       fetchApi<import('./types').CreateTurnResponse>(
         `/sessions/${sessionId}/turns/${turnId}/retry`,
         { method: 'POST', body: JSON.stringify(data) },
+      ),
+
+    approve: (
+      sessionId: string,
+      turnId: string,
+      data: import('./types').ApproveTurnRequest,
+    ) =>
+      fetchApi<{ turn: import('./types').Turn }>(
+        `/sessions/${sessionId}/turns/${turnId}/approve`,
+        { method: 'POST', body: JSON.stringify(data) },
+      ),
+
+    cancel: (sessionId: string, turnId: string) =>
+      fetchApi<{ turn: import('./types').Turn }>(
+        `/sessions/${sessionId}/turns/${turnId}/cancel`,
+        { method: 'POST' },
       ),
 
     tree: (sessionId: string) =>

@@ -1,5 +1,6 @@
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { TURN_STATUS } from '../api/turnStream';
 import type { Turn } from '../api/types';
 
 interface MessageViewProps {
@@ -13,9 +14,13 @@ export function MessageView({ turn }: MessageViewProps) {
         <span
           className={[
             'px-2 py-1 rounded',
-            turn.status === 'completed' ? 'bg-green-100 text-green-800' : '',
-            turn.status === 'running' ? 'bg-yellow-100 text-yellow-800' : '',
-            turn.status === 'failed' ? 'bg-red-100 text-red-800' : '',
+            turn.status === TURN_STATUS.COMPLETED
+              ? 'bg-green-100 text-green-800'
+              : '',
+            turn.status === TURN_STATUS.RUNNING
+              ? 'bg-yellow-100 text-yellow-800'
+              : '',
+            turn.status === TURN_STATUS.FAILED ? 'bg-red-100 text-red-800' : '',
           ].join(' ')}
         >
           {turn.status}

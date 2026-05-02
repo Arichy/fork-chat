@@ -9,7 +9,7 @@ use crate::models::Turn;
 
 /// Build the full input for a Responses-API call, given the ordered turn path
 /// (root → parent) and the new user message to append.
-pub fn build_input_items(history: &[Turn], new_user_content: &str) -> Vec<InputItem> {
+pub fn build_input_items(history: &[Turn], new_user_content: Option<&str>) -> Vec<InputItem> {
     let mut items: Vec<InputItem> = Vec::new();
 
     for turn in history {
@@ -21,11 +21,13 @@ pub fn build_input_items(history: &[Turn], new_user_content: &str) -> Vec<InputI
         }
     }
 
-    items.push(InputItem::EasyMessage(EasyInputMessage {
-        role: Role::User,
-        content: EasyInputContent::Text(new_user_content.to_string()),
-        ..Default::default()
-    }));
+    if let Some(new_user_content) = new_user_content {
+        items.push(InputItem::EasyMessage(EasyInputMessage {
+            role: Role::User,
+            content: EasyInputContent::Text(new_user_content.to_string()),
+            ..Default::default()
+        }));
+    }
 
     items
 }
@@ -72,6 +74,11 @@ fn parse_transcript_messages(arr: &[JsonValue]) -> Option<Vec<InputItem>> {
 fn parse_legacy_items(arr: &[JsonValue]) -> Vec<InputItem> {
     let mut items = Vec::new();
     for value in arr {
+        // Some OpenAI-compatible providers emit reasoning blocks that are not
+        // accepted when replayed back as input items in subsequent rounds.
+        if value.get("type").and_then(|v| v.as_str()) == Some("reasoning") {
+            continue;
+        }
         if let Ok(item) = serde_json::from_value::<Item>(value.clone()) {
             items.push(InputItem::Item(item));
             continue;

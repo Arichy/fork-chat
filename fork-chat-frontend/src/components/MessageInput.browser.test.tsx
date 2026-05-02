@@ -24,6 +24,15 @@ const { CONFIG } = vi.hoisted(() => {
         models: [{ id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6' }],
       },
     ],
+    tools: [
+      { name: 'read', description: 'read', default_policy: 'auto' },
+      {
+        name: 'write',
+        description: 'write',
+        default_policy: 'require_approval',
+      },
+      { name: 'bash', description: 'bash', default_policy: 'require_approval' },
+    ],
   };
   return { CONFIG };
 });

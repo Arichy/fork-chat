@@ -5,6 +5,7 @@
 use chrono::Utc;
 use fork_chat_backend::llm::openai::message_builder::build_input_items;
 use fork_chat_backend::models::Turn;
+use fork_chat_backend::turn_runtime::TurnRuntimeState;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
@@ -26,7 +27,7 @@ fn turn(user_text: Option<&str>, assistant_text: Option<&str>, turn_messages: Va
         output_tokens: None,
         cached_tokens: None,
         error: None,
-        metadata: json!({}),
+        runtime_state: TurnRuntimeState::default(),
         created_at: Utc::now(),
         completed_at: None,
     }
@@ -34,7 +35,7 @@ fn turn(user_text: Option<&str>, assistant_text: Option<&str>, turn_messages: Va
 
 #[test]
 fn empty_history_yields_single_user_message() {
-    let items = build_input_items(&[], "hi");
+    let items = build_input_items(&[], Some("hi"));
     let serialized = serde_json::to_value(&items).unwrap();
     let arr = serialized.as_array().unwrap();
     assert_eq!(arr.len(), 1);
@@ -45,7 +46,7 @@ fn empty_history_yields_single_user_message() {
 #[test]
 fn fallback_used_when_turn_messages_empty() {
     let history = vec![turn(Some("hello"), Some("world"), json!([]))];
-    let items = build_input_items(&history, "next");
+    let items = build_input_items(&history, Some("next"));
     let serialized = serde_json::to_value(&items).unwrap();
     let arr = serialized.as_array().unwrap();
 
@@ -83,7 +84,7 @@ fn transcript_turn_messages_are_replayed() {
     ]);
 
     let history = vec![turn(None, None, transcript)];
-    let items = build_input_items(&history, "follow-up");
+    let items = build_input_items(&history, Some("follow-up"));
     let serialized = serde_json::to_value(&items).unwrap();
     let arr = serialized.as_array().unwrap();
 
@@ -110,7 +111,7 @@ fn legacy_turn_messages_are_passed_through() {
     }]);
 
     let history = vec![turn(Some("prev question"), Some("prev answer"), raw)];
-    let items = build_input_items(&history, "follow-up");
+    let items = build_input_items(&history, Some("follow-up"));
     let serialized = serde_json::to_value(&items).unwrap();
     let arr = serialized.as_array().unwrap();
 
@@ -128,7 +129,7 @@ fn walks_ancestor_chain_in_order() {
         turn(Some("q2"), Some("a2"), json!([])),
         turn(Some("q3"), Some("a3"), json!([])),
     ];
-    let items = build_input_items(&history, "q4");
+    let items = build_input_items(&history, Some("q4"));
     let serialized = serde_json::to_value(&items).unwrap();
     let arr = serialized.as_array().unwrap();
 

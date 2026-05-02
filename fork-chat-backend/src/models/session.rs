@@ -10,7 +10,7 @@ pub struct Session {
     pub title: Option<String>,
     pub system_prompt: Option<String>,
     pub protocol: Protocol,
-    pub metadata: serde_json::Value,
+    pub preferences: serde_json::Value,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

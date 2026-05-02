@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 
 use crate::llm::ProviderRegistry;
+use crate::turn_stream::TurnStreamHub;
+use crate::turn_task_manager::TurnTaskManager;
 
 /// Wire protocol a session (and by extension its turns) speaks to the upstream
 /// LLM vendor. Locked at session creation time.
@@ -172,19 +174,31 @@ impl Config {
 /// Runtime state shared by every handler.
 #[derive(Clone)]
 pub struct AppState {
+    /// Shared PostgreSQL pool for all request handlers and background workers.
     pub db: PgPool,
+    /// Immutable application configuration loaded at process startup.
     pub config: Arc<Config>,
+    /// Protocol/provider adapter registry used by the turn loop.
     pub registry: Arc<ProviderRegistry>,
+    /// Per-turn SSE pub/sub hub used by snapshot+live streaming.
+    pub turn_stream_hub: Arc<TurnStreamHub>,
+    /// Process-local task/cancellation registry for active turn loops.
+    pub turn_task_manager: Arc<TurnTaskManager>,
 }
 
 impl AppState {
+    /// Construct application state and all in-memory shared services.
     pub fn new(db: PgPool, config: Config) -> Self {
         let config = Arc::new(config);
         let registry = Arc::new(ProviderRegistry::from_config(&config));
+        let turn_stream_hub = Arc::new(TurnStreamHub::new());
+        let turn_task_manager = Arc::new(TurnTaskManager::new());
         Self {
             db,
             config,
             registry,
+            turn_stream_hub,
+            turn_task_manager,
         }
     }
 }

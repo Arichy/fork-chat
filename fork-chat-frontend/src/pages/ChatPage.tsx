@@ -4,7 +4,9 @@ import { ReactFlowProvider } from '@xyflow/react';
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { api } from '../api';
+import { isStreamingTurnStatus, TURN_STATUS } from '../api/turnStream';
 import { ChatTree, MessageInput, TurnDetailModal } from '../components';
+import { useTurnStream } from '../hooks/useTurnStream';
 import { useChatStore } from '../store';
 
 export function ChatPage() {
@@ -12,6 +14,7 @@ export function ChatPage() {
   const queryClient = useQueryClient();
   const { selectedTurnId, setSelectedTurn } = useChatStore();
   const [modalTurnId, setModalTurnId] = useState<string | null>(null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
   const [pendingFailedTurn, setPendingFailedTurn] = useState<{
     text: string;
     provider: string;
@@ -58,7 +61,10 @@ export function ChatPage() {
       queryClient.invalidateQueries({ queryKey: ['sessions'] });
       setPendingFailedTurn(null);
       setSelectedTurn(result.turn.id);
-      setModalTurnId(null);
+      setModalTurnId(
+        isStreamingTurnStatus(result.turn.status) ? result.turn.id : null,
+      );
+      setIsModalOpen(isStreamingTurnStatus(result.turn.status));
     },
     onError: (error, variables) => {
       queryClient.invalidateQueries({ queryKey: ['tree', sessionId] });
@@ -81,20 +87,72 @@ export function ChatPage() {
         provider: data.provider,
         model: data.model,
       }),
-    onSuccess: () => {
+    onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ['tree', sessionId] });
+      setSelectedTurn(result.turn.id);
+      setModalTurnId(
+        isStreamingTurnStatus(result.turn.status) ? result.turn.id : null,
+      );
+      setIsModalOpen(isStreamingTurnStatus(result.turn.status));
     },
     onError: (error) => {
       toast.error(error instanceof Error ? error.message : 'Retry failed');
     },
   });
 
+  const approveMutation = useMutation({
+    mutationFn: (data: {
+      turnId: string;
+      pendingCallId: string;
+      decision: 'allow' | 'allow_always' | 'deny';
+    }) =>
+      api.turns.approve(sessionId, data.turnId, {
+        decisions: [
+          {
+            pending_call_id: data.pendingCallId,
+            decision: data.decision,
+          },
+        ],
+      }),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ['tree', sessionId] });
+      setSelectedTurn(result.turn.id);
+      setModalTurnId(result.turn.id);
+      setIsModalOpen(true);
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : 'Approve failed');
+    },
+  });
+
+  const cancelMutation = useMutation({
+    mutationFn: (data: { turnId: string }) =>
+      api.turns.cancel(sessionId, data.turnId),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ['tree', sessionId] });
+      setSelectedTurn(result.turn.id);
+      setModalTurnId(result.turn.id);
+      setIsModalOpen(true);
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : 'Cancel failed');
+    },
+  });
+
   const turns = (treeData?.turns ?? []).filter(
-    (t) => !(t.status === 'failed' && t.retry_turn_id != null),
+    (t) => !(t.status === TURN_STATUS.FAILED && t.retry_turn_id != null),
   );
   const modalTurn = modalTurnId
     ? (turns.find((t) => t.id === modalTurnId) ?? null)
     : null;
+  const modalTurnStatus = modalTurn?.status ?? null;
+
+  useTurnStream({
+    sessionId,
+    turnId: modalTurnId,
+    turnStatus: modalTurnStatus,
+    queryClient,
+  });
 
   useEffect(() => {
     if (!pendingFailedTurn) return;
@@ -102,7 +160,7 @@ export function ChatPage() {
     const candidate = turns
       .filter(
         (turn) =>
-          turn.status === 'failed' &&
+          turn.status === TURN_STATUS.FAILED &&
           turn.retry_turn_id == null &&
           turn.user_text === pendingFailedTurn.text &&
           turn.provider === pendingFailedTurn.provider &&
@@ -118,6 +176,7 @@ export function ChatPage() {
 
     setSelectedTurn(candidate.id);
     setModalTurnId(candidate.id);
+    setIsModalOpen(true);
     setPendingFailedTurn(null);
   }, [pendingFailedTurn, setSelectedTurn, turns]);
 
@@ -125,6 +184,7 @@ export function ChatPage() {
   useEffect(() => {
     setSelectedTurn(null);
     setModalTurnId(null);
+    setIsModalOpen(false);
     setPendingFailedTurn(null);
   }, [sessionId, setSelectedTurn]);
 
@@ -132,6 +192,7 @@ export function ChatPage() {
     (id: string) => {
       setSelectedTurn(id);
       setModalTurnId(id);
+      setIsModalOpen(true);
     },
     [setSelectedTurn],
   );
@@ -147,6 +208,18 @@ export function ChatPage() {
 
   const handleRetry = (turnId: string, provider: string, model: string) => {
     retryMutation.mutate({ turnId, provider, model });
+  };
+
+  const handleApprove = (
+    turnId: string,
+    pendingCallId: string,
+    decision: 'allow' | 'allow_always' | 'deny',
+  ) => {
+    approveMutation.mutate({ turnId, pendingCallId, decision });
+  };
+
+  const handleCancel = (turnId: string) => {
+    cancelMutation.mutate({ turnId });
   };
 
   return (
@@ -192,13 +265,20 @@ export function ChatPage() {
         <TurnDetailModal
           turn={modalTurn}
           protocol={protocol}
-          open={modalTurnId !== null}
+          open={isModalOpen && modalTurnId !== null}
           onOpenChange={(open) => {
-            if (!open) setModalTurnId(null);
+            setIsModalOpen(open);
           }}
           onSend={handleSend}
           onRetry={handleRetry}
-          isSending={sendMutation.isPending || retryMutation.isPending}
+          onApprove={handleApprove}
+          onCancel={handleCancel}
+          isSending={
+            sendMutation.isPending ||
+            retryMutation.isPending ||
+            approveMutation.isPending ||
+            cancelMutation.isPending
+          }
         />
       )}
     </div>

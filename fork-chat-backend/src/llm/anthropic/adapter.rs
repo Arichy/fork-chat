@@ -8,10 +8,11 @@ use serde_json::Value as JsonValue;
 use crate::error::AppError;
 use crate::llm::{ChatAdapter, SendResult};
 use crate::models::Turn;
+use crate::tooling::tool_definitions;
 
 use super::client::AnthropicClient;
 use super::message_builder::build_messages;
-use super::types::MessagesRequest;
+use super::types::{AnthropicTool, MessagesRequest};
 
 /// Fallback cap sent as `max_tokens` when no per-call override is supplied.
 /// Anthropic requires this field; 4096 is a reasonable middle ground.
@@ -34,17 +35,26 @@ impl ChatAdapter for AnthropicAdapter {
     async fn send(
         &self,
         history: &[Turn],
-        new_user_text: &str,
+        new_user_text: Option<&str>,
         model: &str,
         instructions: Option<&str>,
     ) -> Result<SendResult, AppError> {
         let messages = build_messages(history, new_user_text);
+        let tools = tool_definitions()
+            .into_iter()
+            .map(|tool| AnthropicTool {
+                name: tool.name.to_string(),
+                description: Some(tool.description.to_string()),
+                input_schema: tool.input_schema,
+            })
+            .collect();
 
         let request = MessagesRequest {
             model: model.to_string(),
             max_tokens: DEFAULT_MAX_TOKENS,
             system: instructions.map(|s| s.to_string()),
             messages,
+            tools: Some(tools),
         };
 
         let response = self.client.messages(&request).await?;

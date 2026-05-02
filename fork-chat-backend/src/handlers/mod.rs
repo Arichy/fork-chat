@@ -8,5 +8,6 @@ pub use sessions::{
     update_session_handler,
 };
 pub use turns::{
-    create_turn_handler, get_session_tree_handler, get_turn_handler, retry_turn_handler,
+    approve_turn_handler, cancel_turn_handler, create_turn_handler, get_session_tree_handler,
+    get_turn_handler, retry_turn_handler, stream_turn_handler,
 };

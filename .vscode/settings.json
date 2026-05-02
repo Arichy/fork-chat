@@ -22,6 +22,7 @@
   },
   "biome.configurationPath": "./fork-chat-frontend/biome.json",
   "biome.lsp.bin": "./fork-chat-frontend/node_modules/.bin/biome",
+  "biome.enabled": true,
   "editor.codeActionsOnSave": {
     "source.organizeImports.biome": "explicit"
   }

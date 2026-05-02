@@ -24,6 +24,7 @@ import {
 } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { TURN_STATUS } from '../../api/turnStream';
 import '@xyflow/react/dist/style.css';
 import type { Turn } from '../../api/types';
 import { layout } from './layout';
@@ -55,17 +56,17 @@ function TurnNode({ id, data }: NodeProps<TurnNodeType>) {
   const bgClass = [
     'bg-white',
     isSelected ? 'bg-blue-50' : '',
-    turn.status === 'running' ? 'bg-yellow-50' : '',
-    turn.status === 'failed' ? 'bg-red-50' : '',
+    turn.status === TURN_STATUS.RUNNING ? 'bg-yellow-50' : '',
+    turn.status === TURN_STATUS.FAILED ? 'bg-red-50' : '',
   ]
     .filter(Boolean)
     .join(' ');
 
   const gradientFrom = isSelected
     ? 'from-blue-50'
-    : turn.status === 'running'
+    : turn.status === TURN_STATUS.RUNNING
       ? 'from-yellow-50'
-      : turn.status === 'failed'
+      : turn.status === TURN_STATUS.FAILED
         ? 'from-red-50'
         : 'from-white';
 
@@ -79,8 +80,10 @@ function TurnNode({ id, data }: NodeProps<TurnNodeType>) {
         `px-3 py-2 rounded-lg border-2 cursor-pointer`,
         'bg-white shadow-md',
         isSelected ? 'border-blue-500 bg-blue-50' : 'border-gray-300',
-        turn.status === 'running' ? 'border-yellow-500 bg-yellow-50' : '',
-        turn.status === 'failed' ? 'border-red-500 bg-red-50' : '',
+        turn.status === TURN_STATUS.RUNNING
+          ? 'border-yellow-500 bg-yellow-50'
+          : '',
+        turn.status === TURN_STATUS.FAILED ? 'border-red-500 bg-red-50' : '',
       ].join(' ')}
       style={{ width: NODE_WIDTH }}
       onClick={() => onSelect(turn.id)}
@@ -178,7 +181,7 @@ export function ChatTree({
       source: turn.parent_turn_id!,
       target: turn.id,
       type: 'smoothstep',
-      animated: turn.status === 'running',
+      animated: turn.status === TURN_STATUS.RUNNING,
       markerEnd: { type: MarkerType.ArrowClosed, width: 20, height: 20 },
       style: { stroke: '#64748b', strokeWidth: 2 },
     }));

@@ -24,6 +24,11 @@ async fn get_config_returns_protocols_and_providers() {
 
     let providers = body["providers"].as_array().expect("providers array");
     assert_eq!(providers.len(), 2);
+    let tools = body["tools"].as_array().expect("tools array");
+    assert_eq!(tools.len(), 3);
+    assert_eq!(tools[0]["name"], "read");
+    assert_eq!(tools[1]["name"], "write");
+    assert_eq!(tools[2]["name"], "bash");
 
     // Find the openai + anthropic providers by name (no ordering assumed).
     let find = |name: &str| {

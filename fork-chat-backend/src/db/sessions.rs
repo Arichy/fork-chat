@@ -1,4 +1,5 @@
 use chrono::{DateTime, Utc};
+use serde_json::Value as JsonValue;
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -108,6 +109,22 @@ pub async fn update_session_title(db: &PgPool, id: Uuid, title: &str) -> Result<
         .execute(db)
         .await
         .map_err(|e| AppError::DatabaseError(format!("Failed to update session title: {}", e)))?;
+    Ok(())
+}
+
+pub async fn update_session_preferences(
+    db: &PgPool,
+    id: Uuid,
+    preferences: &JsonValue,
+) -> Result<()> {
+    sqlx::query("UPDATE sessions SET preferences = $1, updated_at = now() WHERE id = $2")
+        .bind(preferences)
+        .bind(id)
+        .execute(db)
+        .await
+        .map_err(|e| {
+            AppError::DatabaseError(format!("Failed to update session preferences: {}", e))
+        })?;
     Ok(())
 }
 

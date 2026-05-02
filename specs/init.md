@@ -1,14 +1,21 @@
 # Chat Tree Backend Design
 
+> This is an early bootstrap design doc.
+> Current normative behavior is defined in:
+> - `specs/multi-protocol.md`
+> - `specs/tool-use.md`
+> If this file conflicts with those docs, follow the newer docs.
+
 ## Context
 
-Backend service for fork-chat project with tree-structured conversations. **OpenAI API first**, Anthropic support later.
+Backend service for fork-chat project with tree-structured conversations.
+Current implementation supports both OpenAI and Anthropic protocols.
 
 **Stack**: Rust + Axum + tracing + eyre + PostgreSQL + async-openai
 
 **Challenges**:
 - Tree structure storage and queries
-- Session state management (running/completed/failed)
+- Session state management (running/awaiting_approval/completed/failed)
 - OpenAI API integration with tool calls support
 
 ---
@@ -25,7 +32,8 @@ CREATE TABLE sessions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     title TEXT,
     system_prompt TEXT,
-    metadata JSONB NOT NULL DEFAULT '{}',
+    protocol TEXT NOT NULL CHECK (protocol IN ('openai', 'anthropic')),
+    preferences JSONB NOT NULL DEFAULT '{}',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -35,17 +43,19 @@ CREATE TABLE turns (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
     parent_turn_id UUID REFERENCES turns(id) ON DELETE SET NULL,
-    status TEXT NOT NULL CHECK (status IN ('running', 'completed', 'failed')),
+    retry_turn_id UUID REFERENCES turns(id) ON DELETE SET NULL,
+    status TEXT NOT NULL CHECK (status IN ('running', 'awaiting_approval', 'completed', 'failed')),
     user_text TEXT,              -- User input (display/search)
     assistant_text TEXT,         -- Final AI response (display/search)
-    raw_items JSONB NOT NULL DEFAULT '[]',  -- Full OpenAI messages for this turn (includes user + AI multi-step responses)
+    turn_messages JSONB NOT NULL DEFAULT '[]',  -- Protocol-native transcript for this turn
+    response_id TEXT,
     provider TEXT,
     model TEXT,
     input_tokens INT,
     output_tokens INT,
     cached_tokens INT,
     error JSONB,
-    metadata JSONB NOT NULL DEFAULT '{}',
+    runtime_state JSONB NOT NULL DEFAULT '{}',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     completed_at TIMESTAMPTZ
 );
@@ -58,11 +68,12 @@ CREATE INDEX idx_turns_session_created ON turns(session_id, created_at);
 
 ### 1.2 Design Notes
 
-- **`raw_items`**: JSONB array containing complete OpenAI messages for this turn
-  - Includes user message + AI response (including tool calls, function results, etc.)
-  - Compatible with `async-openai` types: `Vec<ChatCompletionRequestMessage>`
+- **`turn_messages`**: JSONB array containing protocol-native transcript entries
+  - Includes user/assistant/tool blocks appended per internal round
+  - Source of truth for replay
 - **`user_text`/`assistant_text`**: Simplified text for display and search
-- **`status`**: Supports streaming (`running`) and error handling (`failed`)
+- **`status`**: Supports active loop (`running`), approval pause
+  (`awaiting_approval`), success (`completed`), and failures (`failed`)
 - **Token tracking**: `input_tokens`, `output_tokens`, `cached_tokens` for cost monitoring
 - **`system_prompt`**: Stored in session, prepended to messages when calling API
 
@@ -73,33 +84,35 @@ CREATE INDEX idx_turns_session_created ON turns(session_id, created_at);
 ### 2.1 RESTful Endpoints
 
 ```
-POST   /api/sessions                  Create new session (must include first turn)
+POST   /api/sessions                  Create new session
 GET    /api/sessions                  List all sessions
 GET    /api/sessions/:id              Get session details
 DELETE /api/sessions/:id              Delete session
+GET    /api/config                    Public protocol/provider/tool config
 
 POST   /api/sessions/:id/turns        Create new turn (continue conversation)
 GET    /api/sessions/:id/tree         Get full tree structure
 GET    /api/sessions/:id/turns/:id    Get specific turn details
+POST   /api/sessions/:id/turns/:id/retry
+GET    /api/sessions/:id/turns/:id/stream
+POST   /api/sessions/:id/turns/:id/approve
+POST   /api/sessions/:id/turns/:id/cancel
 ```
 
 ### 2.2 Request/Response Structures
 
 ```rust
-// Create session request (must include first turn)
+// Create session request
 #[derive(Debug, Deserialize)]
 pub struct CreateSessionRequest {
+    pub protocol: String,              // "openai" | "anthropic"
     pub system_prompt: Option<String>,  // Optional system prompt
-    pub user_text: String,              // Required: first turn's user input
-    pub provider: String,               // Required: "openai" (future: "anthropic")
-    pub model: String,                  // Required: model to use (e.g., "gpt-4o")
 }
 
 // Create session response
 #[derive(Debug, Serialize)]
 pub struct CreateSessionResponse {
-    pub session: Session,  // title auto-generated after AI responds
-    pub turn: Turn,        // contains user + assistant messages in raw_items
+    pub session: Session,
 }
 
 // Create turn request (continue conversation)
@@ -123,10 +136,12 @@ pub struct Turn {
     pub id: Uuid,
     pub session_id: Uuid,
     pub parent_turn_id: Option<Uuid>,
-    pub status: String,  // running, completed, failed
+    pub retry_turn_id: Option<Uuid>,
+    pub status: String,  // running, awaiting_approval, completed, failed
     pub user_text: Option<String>,
     pub assistant_text: Option<String>,
-    pub raw_items: serde_json::Value,  // Vec<ChatCompletionRequestMessage>
+    pub turn_messages: serde_json::Value,  // protocol-native transcript
+    pub response_id: Option<String>,
     pub provider: Option<String>,
     pub model: Option<String>,
     pub input_tokens: Option<i32>,
@@ -142,6 +157,7 @@ pub struct Session {
     pub id: Uuid,
     pub title: Option<String>,  // generated after first turn completes
     pub system_prompt: Option<String>,
+    pub protocol: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -149,16 +165,17 @@ pub struct Session {
 
 ### 2.3 Title Generation Flow
 
-After first turn completes:
-1. Call AI with prompt: "Generate a short title (max 50 chars) for this conversation"
-2. Update `session.title` with generated title
-3. Title stored in session, displayed in session list
+Current lightweight behavior:
+1. If session title is empty, derive it from the first user text (truncated).
+2. Persist to `session.title`.
+3. Display in session list.
 
 ---
 
-## 3. OpenAI Adapter
+## 3. Adapter Layer
 
-Using async-openai crate:
+OpenAI and Anthropic adapters share the same high-level contract and are chosen
+by `(session.protocol, provider)`.
 
 ```rust
 use async_openai::{Client, types::CreateChatCompletionRequestArgs};
@@ -186,11 +203,11 @@ impl OpenaiAdapter {
 
         let response = self.client.chat().create(request).await?;
 
-        // Build raw_items: original user message + AI response(s)
+        // Build turn_messages: protocol-native transcript entries
         // Note: response may include tool calls, handle multiple messages
-        let raw_items = ...;  // TODO: handle tool calls
+        let turn_messages = ...;  // TODO: handle tool calls
 
-        Ok(raw_items)
+        Ok(turn_messages)
     }
 }
 ```
@@ -209,12 +226,12 @@ pub async fn build_messages_for_turn(
     // Get path from root to parent turn
     let turns = get_path_to_turn(db, parent_turn_id).await?;
 
-    // Merge all raw_items from parent turns
+    // Merge all turn_messages entries from parent turns
     let history: Vec<ChatCompletionRequestMessage> = turns
         .iter()
         .flat_map(|t| {
-            // Deserialize raw_items from JSONB
-            serde_json::from_value::<Vec<ChatCompletionRequestMessage>>(t.raw_items.clone())
+            // Deserialize turn_messages from JSONB
+            serde_json::from_value::<Vec<ChatCompletionRequestMessage>>(t.turn_messages.clone())
                 .unwrap_or_default()
         })
         .collect();

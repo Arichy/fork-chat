@@ -5,7 +5,7 @@ CREATE TABLE
     title TEXT,
     system_prompt TEXT,
     protocol TEXT NOT NULL CHECK (protocol IN ('openai', 'anthropic')),
-    metadata JSONB NOT NULL DEFAULT '{}',
+    preferences JSONB NOT NULL DEFAULT '{}',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now (),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now ()
   );
@@ -17,7 +17,7 @@ CREATE TABLE
     session_id UUID NOT NULL REFERENCES sessions (id) ON DELETE CASCADE,
     parent_turn_id UUID REFERENCES turns (id) ON DELETE SET NULL,
     retry_turn_id UUID REFERENCES turns (id) ON DELETE SET NULL,
-    status TEXT NOT NULL CHECK (status IN ('running', 'completed', 'failed')),
+    status TEXT NOT NULL CHECK (status IN ('running', 'awaiting_approval', 'completed', 'failed')),
     user_text TEXT, -- user input
     assistant_text TEXT, -- final text from AI, would be null when running
     turn_messages JSONB NOT NULL DEFAULT '[]', -- Per-turn message transcript (user/tool results + assistant replies)
@@ -28,7 +28,7 @@ CREATE TABLE
     output_tokens INT,
     cached_tokens INT,
     error JSONB,
-    metadata JSONB NOT NULL DEFAULT '{}',
+    runtime_state JSONB NOT NULL DEFAULT '{}',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now (),
     completed_at TIMESTAMPTZ
   );

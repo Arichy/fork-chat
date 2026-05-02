@@ -9,5 +9,5 @@ pub use sessions::{
 };
 pub use turns::{
     UpdateTurnParams, create_turn, get_path_to_turn_in_session, get_session_tree,
-    get_turn_in_session, session_has_root_turn, update_turn,
+    get_turn_in_session, session_has_root_turn, update_turn, update_turn_if_active,
 };

@@ -1,9 +1,12 @@
 use serde_json::Value as JsonValue;
 use sqlx::PgPool;
+use sqlx::types::Json;
 use uuid::Uuid;
 
 use crate::error::{AppError, Result};
 use crate::models::Turn;
+use crate::turn_runtime::TurnRuntimeState;
+use crate::turn_runtime::status as turn_status;
 
 pub async fn session_has_root_turn(db: &PgPool, session_id: Uuid) -> Result<bool> {
     let result = sqlx::query_scalar::<_, bool>(
@@ -43,6 +46,7 @@ pub struct UpdateTurnParams<'a> {
     pub status: &'a str,
     pub assistant_text: Option<&'a str>,
     pub turn_messages: &'a JsonValue,
+    pub runtime_state: Option<&'a TurnRuntimeState>,
     pub response_id: Option<&'a str>,
     pub provider: &'a str,
     pub model: &'a str,
@@ -60,15 +64,16 @@ pub async fn update_turn(db: &PgPool, id: Uuid, params: UpdateTurnParams<'_>) ->
             status = $2,
             assistant_text = $3,
             turn_messages = $4,
-            response_id = $5,
-            provider = $6,
-            model = $7,
-            input_tokens = $8,
-            output_tokens = $9,
-            cached_tokens = $10,
-            error = $11,
-            retry_turn_id = $12,
-            completed_at = CASE WHEN $2 = 'completed' OR $2 = 'failed' THEN now() ELSE NULL END
+            runtime_state = COALESCE($5, runtime_state),
+            response_id = $6,
+            provider = $7,
+            model = $8,
+            input_tokens = $9,
+            output_tokens = $10,
+            cached_tokens = $11,
+            error = $12,
+            retry_turn_id = $13,
+            completed_at = CASE WHEN $2 = $14 OR $2 = $15 THEN now() ELSE NULL END
         WHERE id = $1
         RETURNING *
         "#,
@@ -77,6 +82,7 @@ pub async fn update_turn(db: &PgPool, id: Uuid, params: UpdateTurnParams<'_>) ->
     .bind(params.status)
     .bind(params.assistant_text)
     .bind(params.turn_messages)
+    .bind(params.runtime_state.cloned().map(Json))
     .bind(params.response_id)
     .bind(params.provider)
     .bind(params.model)
@@ -85,7 +91,63 @@ pub async fn update_turn(db: &PgPool, id: Uuid, params: UpdateTurnParams<'_>) ->
     .bind(params.cached_tokens)
     .bind(params.error)
     .bind(params.retry_turn_id)
+    .bind(turn_status::COMPLETED)
+    .bind(turn_status::FAILED)
     .fetch_one(db)
+    .await
+    .map_err(|e| AppError::DatabaseError(format!("Failed to update turn: {}", e)))
+}
+
+/// Update a turn only when it is still in an active status (`running` or
+/// `awaiting_approval`).
+///
+/// This guarded update prevents stale background workers from overwriting
+/// terminal rows (`completed`/`failed`) after cancellation or concurrent
+/// lifecycle transitions.
+pub async fn update_turn_if_active(
+    db: &PgPool,
+    id: Uuid,
+    params: UpdateTurnParams<'_>,
+) -> Result<Option<Turn>> {
+    sqlx::query_as::<_, Turn>(
+        r#"
+        UPDATE turns SET
+            status = $2,
+            assistant_text = $3,
+            turn_messages = $4,
+            runtime_state = COALESCE($5, runtime_state),
+            response_id = $6,
+            provider = $7,
+            model = $8,
+            input_tokens = $9,
+            output_tokens = $10,
+            cached_tokens = $11,
+            error = $12,
+            retry_turn_id = $13,
+            completed_at = CASE WHEN $2 = $14 OR $2 = $15 THEN now() ELSE NULL END
+        WHERE id = $1
+          AND status IN ($16, $17)
+        RETURNING *
+        "#,
+    )
+    .bind(id)
+    .bind(params.status)
+    .bind(params.assistant_text)
+    .bind(params.turn_messages)
+    .bind(params.runtime_state.cloned().map(Json))
+    .bind(params.response_id)
+    .bind(params.provider)
+    .bind(params.model)
+    .bind(params.input_tokens)
+    .bind(params.output_tokens)
+    .bind(params.cached_tokens)
+    .bind(params.error)
+    .bind(params.retry_turn_id)
+    .bind(turn_status::COMPLETED)
+    .bind(turn_status::FAILED)
+    .bind(turn_status::RUNNING)
+    .bind(turn_status::AWAITING_APPROVAL)
+    .fetch_optional(db)
     .await
     .map_err(|e| AppError::DatabaseError(format!("Failed to update turn: {}", e)))
 }
@@ -133,4 +195,24 @@ pub async fn get_session_tree(db: &PgPool, session_id: Uuid) -> Result<Vec<Turn>
         .fetch_all(db)
         .await
         .map_err(|e| AppError::DatabaseError(format!("Failed to get session tree: {}", e)))
+}
+
+pub async fn fail_abandoned_turns(db: &PgPool) -> Result<u64> {
+    let result = sqlx::query(
+        r#"
+        UPDATE turns
+        SET
+            status = $1,
+            error = jsonb_build_object('kind', 'abandoned', 'message', 'Turn abandoned after backend restart'),
+            completed_at = now()
+        WHERE status IN ($2, $3)
+        "#,
+    )
+    .bind(turn_status::FAILED)
+    .bind(turn_status::RUNNING)
+    .bind(turn_status::AWAITING_APPROVAL)
+    .execute(db)
+    .await
+    .map_err(|e| AppError::DatabaseError(format!("Failed to fail abandoned turns: {}", e)))?;
+    Ok(result.rows_affected())
 }

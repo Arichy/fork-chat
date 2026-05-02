@@ -45,7 +45,7 @@ pub trait ChatAdapter: Send + Sync {
     async fn send(
         &self,
         history: &[Turn],
-        new_user_text: &str,
+        new_user_text: Option<&str>,
         model: &str,
         instructions: Option<&str>,
     ) -> Result<SendResult, AppError>;

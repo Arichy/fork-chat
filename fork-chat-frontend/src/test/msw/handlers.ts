@@ -31,6 +31,23 @@ export const handlers = [
           models: [{ id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6' }],
         },
       ],
+      tools: [
+        {
+          name: 'read',
+          description: 'Read a UTF-8 text file from disk by path.',
+          default_policy: 'auto',
+        },
+        {
+          name: 'write',
+          description: 'Write UTF-8 text content to a file path.',
+          default_policy: 'require_approval',
+        },
+        {
+          name: 'bash',
+          description: 'Run a shell command via `bash -lc`.',
+          default_policy: 'require_approval',
+        },
+      ],
     };
     return HttpResponse.json(body);
   }),
@@ -91,6 +108,24 @@ export const handlers = [
       status: 'completed',
     });
     return HttpResponse.json({ turn } satisfies CreateTurnResponse);
+  }),
+
+  http.post(`${API_BASE}/sessions/:id/turns/:turnId/approve`, ({ params }) => {
+    const turn: Turn = makeTurn({
+      id: String(params.turnId),
+      session_id: String(params.id),
+      status: 'running',
+    });
+    return HttpResponse.json({ turn });
+  }),
+
+  http.post(`${API_BASE}/sessions/:id/turns/:turnId/cancel`, ({ params }) => {
+    const turn: Turn = makeTurn({
+      id: String(params.turnId),
+      session_id: String(params.id),
+      status: 'failed',
+    });
+    return HttpResponse.json({ turn });
   }),
 
   http.get(`${API_BASE}/sessions/:id/tree`, ({ params }) => {

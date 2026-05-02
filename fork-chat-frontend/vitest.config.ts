@@ -8,6 +8,9 @@ import { defineConfig } from 'vitest/config';
 // preset, so tests don't depend on generated route tree or aggressive memoization.
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  server: {
+    host: '127.0.0.1',
+  },
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),

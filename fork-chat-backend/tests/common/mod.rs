@@ -27,6 +27,8 @@ use fork_chat_backend::config::{
 };
 use fork_chat_backend::llm::{ProviderRegistry, RegistryOptions};
 use fork_chat_backend::routes::create_routes;
+use fork_chat_backend::turn_stream::TurnStreamHub;
+use fork_chat_backend::turn_task_manager::TurnTaskManager;
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
@@ -35,9 +37,10 @@ use testcontainers::runners::AsyncRunner;
 use testcontainers::{ContainerAsync, ImageExt};
 use testcontainers_modules::postgres::Postgres as PostgresImage;
 use tokio::net::TcpListener;
+use tokio::time::sleep;
 use uuid::Uuid;
 use wiremock::matchers::{method, path};
-use wiremock::{Mock, MockServer, ResponseTemplate};
+use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 
 /// Auto-detect the Docker socket once per process when `DOCKER_HOST` is unset
 /// and the standard `/var/run/docker.sock` path isn't available. This lets
@@ -92,6 +95,8 @@ pub struct TestApp {
     pub openai: MockServer,
     /// Wiremock instance backing the `anthropic` provider binding.
     pub anthropic: MockServer,
+    /// Process-local hub used by SSE tests to publish synthetic live events.
+    pub turn_stream_hub: Arc<TurnStreamHub>,
     pub http: reqwest::Client,
     // Kept last so it is dropped after `db` (pool closes before container goes
     // away, avoiding a noisy "connection refused" log during teardown).
@@ -111,6 +116,41 @@ impl TestApp {
 
     pub fn url(&self, path: &str) -> String {
         format!("{}{}", self.address, path)
+    }
+
+    pub async fn get_turn(&self, session_id: Uuid, turn_id: Uuid) -> Value {
+        self.http
+            .get(self.url(&format!("/api/sessions/{session_id}/turns/{turn_id}")))
+            .send()
+            .await
+            .expect("get turn request failed")
+            .json()
+            .await
+            .expect("invalid turn json")
+    }
+
+    pub async fn wait_turn_status(
+        &self,
+        session_id: Uuid,
+        turn_id: Uuid,
+        expected: &[&str],
+    ) -> Value {
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            let body = self.get_turn(session_id, turn_id).await;
+            let status = body["turn"]["status"].as_str().unwrap_or_default();
+            if expected.contains(&status) {
+                return body;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "timed out waiting for turn {turn_id} status in {:?}, got {} body={}",
+                expected,
+                status,
+                body
+            );
+            sleep(Duration::from_millis(50)).await;
+        }
     }
 
     /// Create a session locked to the given protocol. Defaults to `openai` when
@@ -151,6 +191,7 @@ impl TestApp {
     pub async fn mock_openai_success(&self, text: &str, response_id: &str) {
         Mock::given(method("POST"))
             .and(path("/responses"))
+            .and(|req: &Request| request_has_openai_tools(req))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "id": response_id,
                 "object": "response",
@@ -181,11 +222,139 @@ impl TestApp {
             .await;
     }
 
+    /// Mock a successful OpenAI response that is intentionally delayed.
+    ///
+    /// Useful for race tests that need a deterministic "in-flight LLM call"
+    /// window so cancel can arrive before the upstream response resolves.
+    pub async fn mock_openai_delayed_success(
+        &self,
+        text: &str,
+        response_id: &str,
+        delay: Duration,
+    ) {
+        Mock::given(method("POST"))
+            .and(path("/responses"))
+            .and(|req: &Request| request_has_openai_tools(req))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_delay(delay)
+                    .set_body_json(json!({
+                        "id": response_id,
+                        "object": "response",
+                        "created_at": 0,
+                        "model": "gpt-5.4-mini",
+                        "status": "completed",
+                        "output": [{
+                            "type": "message",
+                            "id": "msg_test_delayed",
+                            "role": "assistant",
+                            "status": "completed",
+                            "content": [{
+                                "type": "output_text",
+                                "text": text,
+                                "annotations": []
+                            }]
+                        }],
+                        "usage": {
+                            "input_tokens": 10,
+                            "output_tokens": 20,
+                            "total_tokens": 30,
+                            "input_tokens_details": { "cached_tokens": 0 },
+                            "output_tokens_details": { "reasoning_tokens": 0 }
+                        }
+                    })),
+            )
+            .expect(1..)
+            .mount(&self.openai)
+            .await;
+    }
+
     pub async fn mock_openai_failure(&self, status: u16) {
         Mock::given(method("POST"))
             .and(path("/responses"))
+            .and(|req: &Request| request_has_openai_tools(req))
             .respond_with(ResponseTemplate::new(status).set_body_json(json!({
                 "error": { "message": "boom", "type": "server_error" }
+            })))
+            .expect(1..)
+            .mount(&self.openai)
+            .await;
+    }
+
+    pub async fn mock_openai_tool_call(
+        &self,
+        response_id: &str,
+        call_id: &str,
+        tool_name: &str,
+        arguments_json: &str,
+    ) {
+        Mock::given(method("POST"))
+            .and(path("/responses"))
+            .and(|req: &Request| request_has_openai_tools(req))
+            .and(|req: &Request| !request_has_openai_function_call_output(req))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "id": response_id,
+                "object": "response",
+                "created_at": 0,
+                "model": "openai/gpt-oss-120b",
+                "status": "completed",
+                "output": [
+                    {
+                        "type": "reasoning",
+                        "id": "rs_tool",
+                        "summary": []
+                    },
+                    {
+                        "type": "function_call",
+                        "id": call_id,
+                        "call_id": call_id,
+                        "name": tool_name,
+                        "arguments": arguments_json,
+                        "status": "completed"
+                    }
+                ],
+                "usage": {
+                    "input_tokens": 10,
+                    "output_tokens": 20,
+                    "total_tokens": 30,
+                    "input_tokens_details": { "cached_tokens": 0 },
+                    "output_tokens_details": { "reasoning_tokens": 0 }
+                }
+            })))
+            .expect(1..)
+            .mount(&self.openai)
+            .await;
+    }
+
+    pub async fn mock_openai_success_after_function_output(&self, text: &str, response_id: &str) {
+        Mock::given(method("POST"))
+            .and(path("/responses"))
+            .and(|req: &Request| request_has_openai_tools(req))
+            .and(|req: &Request| request_has_openai_function_call_output(req))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "id": response_id,
+                "object": "response",
+                "created_at": 0,
+                "model": "openai/gpt-oss-120b",
+                "status": "completed",
+                "output": [{
+                    "type": "message",
+                    "id": "msg_final",
+                    "role": "assistant",
+                    "status": "completed",
+                    "content": [{
+                        "type": "output_text",
+                        "text": text,
+                        "annotations": []
+                    }]
+                }],
+                "usage": {
+                    "input_tokens": 11,
+                    "output_tokens": 22,
+                    "total_tokens": 33,
+                    "input_tokens_details": { "cached_tokens": 0 },
+                    "output_tokens_details": { "reasoning_tokens": 0 }
+                }
             })))
             .expect(1..)
             .mount(&self.openai)
@@ -197,6 +366,7 @@ impl TestApp {
     pub async fn mock_anthropic_success(&self, text: &str, response_id: &str) {
         Mock::given(method("POST"))
             .and(path("/v1/messages"))
+            .and(|req: &Request| request_has_anthropic_tools(req))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "id": response_id,
                 "type": "message",
@@ -217,6 +387,7 @@ impl TestApp {
     pub async fn mock_anthropic_failure(&self, status: u16) {
         Mock::given(method("POST"))
             .and(path("/v1/messages"))
+            .and(|req: &Request| request_has_anthropic_tools(req))
             .respond_with(ResponseTemplate::new(status).set_body_json(json!({
                 "type": "error",
                 "error": { "type": "api_error", "message": "boom" }
@@ -225,6 +396,91 @@ impl TestApp {
             .mount(&self.anthropic)
             .await;
     }
+
+    pub async fn mock_anthropic_tool_use(
+        &self,
+        response_id: &str,
+        tool_use_id: &str,
+        tool_name: &str,
+        input: Value,
+    ) {
+        Mock::given(method("POST"))
+            .and(path("/v1/messages"))
+            .and(|req: &Request| request_has_anthropic_tools(req))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "id": response_id,
+                "type": "message",
+                "role": "assistant",
+                "model": "claude-sonnet-4-6",
+                "content": [{
+                    "type": "tool_use",
+                    "id": tool_use_id,
+                    "name": tool_name,
+                    "input": input
+                }],
+                "stop_reason": "tool_use",
+                "usage": {
+                    "input_tokens": 11,
+                    "output_tokens": 22
+                }
+            })))
+            .expect(1..)
+            .mount(&self.anthropic)
+            .await;
+    }
+}
+
+fn has_builtin_tool_names(tools: &[Value]) -> bool {
+    let mut names = tools
+        .iter()
+        .filter_map(|tool| tool.get("name").and_then(|v| v.as_str()))
+        .collect::<Vec<_>>();
+    names.sort_unstable();
+    names == vec!["bash", "read", "write"]
+}
+
+fn request_has_openai_tools(req: &Request) -> bool {
+    let Ok(body) = req.body_json::<Value>() else {
+        return false;
+    };
+    let Some(tools) = body.get("tools").and_then(|v| v.as_array()) else {
+        return false;
+    };
+    if !has_builtin_tool_names(tools) {
+        return false;
+    }
+    tools.iter().all(|tool| {
+        tool.get("type").and_then(|v| v.as_str()) == Some("function")
+            && tool.get("parameters").is_some()
+    })
+}
+
+fn request_has_openai_function_call_output(req: &Request) -> bool {
+    let Ok(body) = req.body_json::<Value>() else {
+        return false;
+    };
+    body.get("input")
+        .and_then(|v| v.as_array())
+        .is_some_and(|items| {
+            items
+                .iter()
+                .any(|it| it.get("type").and_then(|v| v.as_str()) == Some("function_call_output"))
+        })
+}
+
+fn request_has_anthropic_tools(req: &Request) -> bool {
+    let Ok(body) = req.body_json::<Value>() else {
+        return false;
+    };
+    let Some(tools) = body.get("tools").and_then(|v| v.as_array()) else {
+        return false;
+    };
+    if !has_builtin_tool_names(tools) {
+        return false;
+    }
+    tools
+        .iter()
+        .all(|tool| tool.get("input_schema").is_some() && tool.get("description").is_some())
 }
 
 /// Boot a real Axum server on a random localhost port against a fresh Postgres
@@ -335,10 +591,13 @@ pub async fn spawn_app() -> TestApp {
             anthropic_timeout: Duration::from_secs(5),
         },
     );
+    let turn_stream_hub = Arc::new(TurnStreamHub::new());
     let state = AppState {
         db: db.clone(),
         config: config_arc,
         registry: Arc::new(registry),
+        turn_stream_hub: turn_stream_hub.clone(),
+        turn_task_manager: Arc::new(TurnTaskManager::new()),
     };
     let app = create_routes(state);
 
@@ -356,6 +615,7 @@ pub async fn spawn_app() -> TestApp {
         db,
         openai,
         anthropic,
+        turn_stream_hub,
         http: reqwest::Client::new(),
         _pg: container,
     }

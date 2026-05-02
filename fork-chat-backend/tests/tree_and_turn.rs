@@ -62,6 +62,18 @@ async fn get_tree_returns_all_turns_ordered_by_created_at() {
         .await
         .unwrap();
     let right_id = right_body["turn"]["id"].as_str().unwrap().to_string();
+    let root_uuid = Uuid::parse_str(&root_id).unwrap();
+    let left_uuid = Uuid::parse_str(&left_id).unwrap();
+    let right_uuid = Uuid::parse_str(&right_id).unwrap();
+    let _ = app
+        .wait_turn_status(session_id, root_uuid, &["completed"])
+        .await;
+    let _ = app
+        .wait_turn_status(session_id, left_uuid, &["completed"])
+        .await;
+    let _ = app
+        .wait_turn_status(session_id, right_uuid, &["completed"])
+        .await;
 
     let resp = app
         .http
@@ -117,6 +129,10 @@ async fn get_single_turn_returns_turn_or_404() {
         .await
         .unwrap();
     let turn_id = created["turn"]["id"].as_str().unwrap();
+    let turn_uuid = Uuid::parse_str(turn_id).unwrap();
+    let _ = app
+        .wait_turn_status(session_id, turn_uuid, &["completed"])
+        .await;
 
     let got = app
         .http
@@ -162,6 +178,10 @@ async fn get_single_turn_returns_404_for_turn_from_another_session() {
         .await
         .unwrap();
     let foreign_turn_id = created["turn"]["id"].as_str().unwrap();
+    let foreign_turn_uuid = Uuid::parse_str(foreign_turn_id).unwrap();
+    let _ = app
+        .wait_turn_status(first_session, foreign_turn_uuid, &["completed"])
+        .await;
 
     let resp = app
         .http

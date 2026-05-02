@@ -1,9 +1,10 @@
-//! Unit tests for Anthropic message replay. Ensures we can rebuild request
-//! history from both legacy and new `turn_messages` shapes.
+//! Unit tests for Anthropic message replay. Ensures we rebuild request history
+//! from the canonical transcript `turn_messages` shape only.
 
 use chrono::Utc;
 use fork_chat_backend::llm::anthropic::message_builder::build_messages;
 use fork_chat_backend::models::Turn;
+use fork_chat_backend::turn_runtime::TurnRuntimeState;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
@@ -24,7 +25,7 @@ fn turn(user_text: Option<&str>, assistant_text: Option<&str>, turn_messages: Va
         output_tokens: None,
         cached_tokens: None,
         error: None,
-        metadata: json!({}),
+        runtime_state: TurnRuntimeState::default(),
         created_at: Utc::now(),
         completed_at: None,
     }
@@ -56,7 +57,7 @@ fn build_messages_accepts_transcript_turn_messages() {
         ]),
     )];
 
-    let messages = build_messages(&history, "q2");
+    let messages = build_messages(&history, Some("q2"));
     let serialized = serde_json::to_value(messages).unwrap();
     let arr = serialized.as_array().unwrap();
 
@@ -73,7 +74,7 @@ fn build_messages_accepts_transcript_turn_messages() {
 }
 
 #[test]
-fn build_messages_supports_legacy_full_response_turn_messages() {
+fn build_messages_ignores_non_transcript_turn_messages() {
     let history = vec![turn(
         Some("q1"),
         Some("fallback"),
@@ -81,31 +82,16 @@ fn build_messages_supports_legacy_full_response_turn_messages() {
             "id": "msg_1",
             "type": "message",
             "role": "assistant",
-            "model": "claude-sonnet-4-6",
-            "content": [{ "type": "text", "text": "a1" }],
-            "usage": { "input_tokens": 1, "output_tokens": 2 }
+            "content": [{ "type": "text", "text": "a1" }]
         }),
     )];
 
-    let messages = build_messages(&history, "q2");
+    let messages = build_messages(&history, Some("q2"));
     let serialized = serde_json::to_value(messages).unwrap();
     let arr = serialized.as_array().unwrap();
+
+    // Non-transcript rows are intentionally ignored in early-stage strict mode.
+    assert_eq!(arr.len(), 1, "serialized = {serialized}");
     assert_eq!(arr[0]["role"], "user");
-    assert_eq!(arr[1]["role"], "assistant");
-    assert_eq!(arr[1]["content"][0]["text"], "a1");
-}
-
-#[test]
-fn build_messages_supports_legacy_content_array_turn_messages() {
-    let history = vec![turn(
-        Some("q1"),
-        Some("fallback"),
-        json!([{ "type": "text", "text": "a1" }]),
-    )];
-
-    let messages = build_messages(&history, "q2");
-    let serialized = serde_json::to_value(messages).unwrap();
-    let arr = serialized.as_array().unwrap();
-    assert_eq!(arr[1]["role"], "assistant");
-    assert_eq!(arr[1]["content"][0]["text"], "a1");
+    assert_eq!(arr[0]["content"][0]["text"], "q2");
 }
