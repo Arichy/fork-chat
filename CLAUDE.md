@@ -40,6 +40,16 @@ Write detailed test cases after feature implementation or bug fix if possible.
 
 This project is currently in early development stage, so breaking changes are **encouraged** if they're better.
 
+# Case Studies (Required)
+
+This project documents technical highlights and challenges in `docs/case-studies/`. As an AI agent, you MUST follow these rules:
+
+1. **New challenges/highlights**: When you encounter or implement a non-trivial technical solution (e.g. a tricky architecture decision, a clever workaround, a complex data model), proactively invoke the `case-study` skill to summarize it into a new file under `docs/case-studies/`. Do this after the feature or fix is complete, not before.
+
+2. **Update existing case studies**: When you modify code that is already covered by a case study in `docs/case-studies/`, you MUST also update the corresponding case study document to keep it in sync. Check `docs/case-studies/` before committing to see if any existing docs reference the area you changed.
+
+In short: new hard problem → write a case study; changed an already-documented area → update its case study.
+
 # Comments
 
 Write detailed comments if possible.
