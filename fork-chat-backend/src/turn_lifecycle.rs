@@ -265,7 +265,7 @@ async fn append_tool_results_and_persist(
     let payload = json!({
         "entry": entry,
     });
-    let (metadata, seq) = runtime_state.bump_stream_seq();
+    let (next_runtime_state, seq) = runtime_state.bump_stream_seq();
     let Some(updated) = update_turn_if_active(
         &state.db,
         turn.id,
@@ -273,7 +273,7 @@ async fn append_tool_results_and_persist(
             status,
             assistant_text: turn.assistant_text.as_deref(),
             turn_messages: &json!(transcript),
-            runtime_state: Some(&metadata),
+            runtime_state: Some(&next_runtime_state),
             response_id: turn.response_id.as_deref(),
             provider: turn.provider.as_deref().unwrap_or_default(),
             model: turn.model.as_deref().unwrap_or_default(),
@@ -365,7 +365,8 @@ async fn continue_turn_loop(
         let round_started_payload = json!({
             "round": round_index + 1,
         });
-        let (metadata, round_started_seq) = turn.runtime_state.bump_stream_seq();
+        let (runtime_state_after_round_start, round_started_seq) =
+            turn.runtime_state.bump_stream_seq();
         let assistant_payload = json!({
             "entry": assistant_entry,
             "assistant_text": send.assistant_text,
@@ -373,7 +374,8 @@ async fn continue_turn_loop(
             "output_tokens": send.output_tokens,
             "cached_tokens": send.cached_tokens,
         });
-        let (metadata, assistant_seq) = metadata.bump_stream_seq();
+        let (runtime_state_after_assistant_entry, assistant_seq) =
+            runtime_state_after_round_start.bump_stream_seq();
         let Some(updated_turn) = update_turn_if_active(
             &state.db,
             turn.id,
@@ -381,7 +383,7 @@ async fn continue_turn_loop(
                 status: turn_status::RUNNING,
                 assistant_text: send.assistant_text.as_deref(),
                 turn_messages: &json!(transcript),
-                runtime_state: Some(&metadata.clear_pending()),
+                runtime_state: Some(&runtime_state_after_assistant_entry.clear_pending()),
                 response_id: send.response_id.as_deref(),
                 provider,
                 model,
@@ -422,7 +424,7 @@ async fn continue_turn_loop(
                 "output_tokens": send.output_tokens,
                 "cached_tokens": send.cached_tokens,
             });
-            let (metadata, seq) = turn.runtime_state.bump_stream_seq();
+            let (next_runtime_state, seq) = turn.runtime_state.bump_stream_seq();
             let Some(updated_turn) = update_turn_if_active(
                 &state.db,
                 turn.id,
@@ -430,7 +432,7 @@ async fn continue_turn_loop(
                     status: turn_status::COMPLETED,
                     assistant_text: send.assistant_text.as_deref(),
                     turn_messages: &turn.turn_messages,
-                    runtime_state: Some(&metadata.clear_pending()),
+                    runtime_state: Some(&next_runtime_state.clear_pending()),
                     response_id: send.response_id.as_deref(),
                     provider,
                     model,
@@ -496,13 +498,13 @@ async fn continue_turn_loop(
         }
 
         let mut transcript = parse_transcript(&turn);
-        let mut metadata_for_auto = turn.runtime_state.clone();
+        let mut runtime_state_for_auto = turn.runtime_state.clone();
         if !executable_auto_calls.is_empty() {
             let tool_calls_payload = json!({
                 "calls": auto_calls,
             });
-            let (metadata, seq) = metadata_for_auto.bump_stream_seq();
-            metadata_for_auto = metadata;
+            let (next_runtime_state, seq) = runtime_state_for_auto.bump_stream_seq();
+            runtime_state_for_auto = next_runtime_state;
             let Some(updated_turn) = update_turn_if_active(
                 &state.db,
                 turn.id,
@@ -510,7 +512,7 @@ async fn continue_turn_loop(
                     status: turn_status::RUNNING,
                     assistant_text: turn.assistant_text.as_deref(),
                     turn_messages: &turn.turn_messages,
-                    runtime_state: Some(&metadata_for_auto.clear_pending()),
+                    runtime_state: Some(&runtime_state_for_auto.clear_pending()),
                     response_id: turn.response_id.as_deref(),
                     provider,
                     model,
@@ -526,7 +528,7 @@ async fn continue_turn_loop(
                 return reload_turn(state, turn.session_id, turn.id).await;
             };
             turn = updated_turn;
-            metadata_for_auto = turn.runtime_state.clone();
+            runtime_state_for_auto = turn.runtime_state.clone();
             publish_stream_event(
                 state,
                 turn.id,
@@ -546,7 +548,7 @@ async fn continue_turn_loop(
                 turn_status::RUNNING,
                 &mut transcript,
                 &auto_results,
-                &metadata_for_auto.clear_pending(),
+                &runtime_state_for_auto.clear_pending(),
             )
             .await?
             else {
@@ -559,8 +561,8 @@ async fn continue_turn_loop(
             let approval_payload = json!({
                 "pending": pending.clone(),
             });
-            let (metadata, seq) = turn.runtime_state.bump_stream_seq();
-            let metadata = metadata.with_pending(pending.clone());
+            let (next_runtime_state, seq) = turn.runtime_state.bump_stream_seq();
+            let next_runtime_state = next_runtime_state.with_pending(pending.clone());
             let Some(updated_turn) = update_turn_if_active(
                 &state.db,
                 turn.id,
@@ -568,7 +570,7 @@ async fn continue_turn_loop(
                     status: turn_status::AWAITING_APPROVAL,
                     assistant_text: turn.assistant_text.as_deref(),
                     turn_messages: &turn.turn_messages,
-                    runtime_state: Some(&metadata),
+                    runtime_state: Some(&next_runtime_state),
                     response_id: turn.response_id.as_deref(),
                     provider,
                     model,
@@ -600,7 +602,7 @@ async fn continue_turn_loop(
     let failed_payload = json!({
         "error": error_json.clone(),
     });
-    let (metadata, seq) = turn.runtime_state.bump_stream_seq();
+    let (next_runtime_state, seq) = turn.runtime_state.bump_stream_seq();
     let Some(turn) = update_turn_if_active(
         &state.db,
         turn.id,
@@ -608,7 +610,7 @@ async fn continue_turn_loop(
             status: turn_status::FAILED,
             assistant_text: turn.assistant_text.as_deref(),
             turn_messages: &turn.turn_messages,
-            runtime_state: Some(&metadata.clear_pending()),
+            runtime_state: Some(&next_runtime_state.clear_pending()),
             response_id: turn.response_id.as_deref(),
             provider,
             model,
@@ -670,7 +672,7 @@ async fn spawn_turn_loop(state: AppState, turn: Turn, provider: String, model: S
             let failed_payload = json!({
                 "error": error_json.clone(),
             });
-            let (metadata, seq) = latest.runtime_state.bump_stream_seq();
+            let (next_runtime_state, seq) = latest.runtime_state.bump_stream_seq();
             let Ok(Some(_)) = update_turn_if_active(
                 &state.db,
                 latest.id,
@@ -678,7 +680,7 @@ async fn spawn_turn_loop(state: AppState, turn: Turn, provider: String, model: S
                     status: turn_status::FAILED,
                     assistant_text: latest.assistant_text.as_deref(),
                     turn_messages: &latest.turn_messages,
-                    runtime_state: Some(&metadata.clear_pending()),
+                    runtime_state: Some(&next_runtime_state.clear_pending()),
                     response_id: latest.response_id.as_deref(),
                     provider: &provider,
                     model: &model,
@@ -762,7 +764,7 @@ async fn create_turn_impl(
     .await?;
 
     let init_messages = json!([build_user_entry(protocol, user_text)]);
-    let (metadata, seq) = turn.runtime_state.bump_stream_seq();
+    let (next_runtime_state, seq) = turn.runtime_state.bump_stream_seq();
     let turn = update_turn(
         &state.db,
         turn.id,
@@ -770,7 +772,7 @@ async fn create_turn_impl(
             status: turn_status::RUNNING,
             assistant_text: None,
             turn_messages: &init_messages,
-            runtime_state: Some(&metadata.clear_pending()),
+            runtime_state: Some(&next_runtime_state.clear_pending()),
             response_id: None,
             provider,
             model,
@@ -828,7 +830,7 @@ async fn retry_turn_impl(
     )
     .await?;
     let init_messages = json!([build_user_entry(protocol, &user_text)]);
-    let (metadata, seq) = new_turn.runtime_state.bump_stream_seq();
+    let (next_runtime_state, seq) = new_turn.runtime_state.bump_stream_seq();
     let new_turn = update_turn(
         &state.db,
         new_turn.id,
@@ -836,7 +838,7 @@ async fn retry_turn_impl(
             status: turn_status::RUNNING,
             assistant_text: None,
             turn_messages: &init_messages,
-            runtime_state: Some(&metadata.clear_pending()),
+            runtime_state: Some(&next_runtime_state.clear_pending()),
             response_id: None,
             provider,
             model,
@@ -972,11 +974,11 @@ async fn approve_turn_impl(
         }
     }
     if !add_rules.is_empty() {
-        let metadata = with_added_allow_rules(&session.preferences, &add_rules);
-        update_session_preferences(&state.db, session_id, &metadata).await?;
+        let updated_preferences = with_added_allow_rules(&session.preferences, &add_rules);
+        update_session_preferences(&state.db, session_id, &updated_preferences).await?;
     }
 
-    let mut metadata_with_decisions = turn
+    let mut runtime_state_with_decisions = turn
         .runtime_state
         .with_pending(remaining.clone())
         .with_approval_decisions(recorded_decisions.clone());
@@ -991,8 +993,8 @@ async fn approve_turn_impl(
                 })
             }).collect::<Vec<_>>(),
         });
-        let (metadata, seq) = metadata_with_decisions.bump_stream_seq();
-        metadata_with_decisions = metadata;
+        let (next_runtime_state, seq) = runtime_state_with_decisions.bump_stream_seq();
+        runtime_state_with_decisions = next_runtime_state;
         let Some(updated_turn) = update_turn_if_active(
             &state.db,
             turn.id,
@@ -1000,7 +1002,7 @@ async fn approve_turn_impl(
                 status: turn_status::AWAITING_APPROVAL,
                 assistant_text: turn.assistant_text.as_deref(),
                 turn_messages: &turn.turn_messages,
-                runtime_state: Some(&metadata_with_decisions),
+                runtime_state: Some(&runtime_state_with_decisions),
                 response_id: turn.response_id.as_deref(),
                 provider: turn.provider.as_deref().unwrap_or_default(),
                 model: turn.model.as_deref().unwrap_or_default(),
@@ -1020,7 +1022,7 @@ async fn approve_turn_impl(
             return reload_turn(state, session_id, turn.id).await;
         };
         turn = updated_turn;
-        metadata_with_decisions = turn.runtime_state.clone();
+        runtime_state_with_decisions = turn.runtime_state.clone();
         publish_stream_event(
             state,
             turn.id,
@@ -1049,7 +1051,7 @@ async fn approve_turn_impl(
             },
             &mut transcript,
             &results,
-            &metadata_with_decisions,
+            &runtime_state_with_decisions,
         )
         .await?
         else {
@@ -1068,7 +1070,7 @@ async fn approve_turn_impl(
                 },
                 assistant_text: turn.assistant_text.as_deref(),
                 turn_messages: &turn.turn_messages,
-                runtime_state: Some(&metadata_with_decisions),
+                runtime_state: Some(&runtime_state_with_decisions),
                 response_id: turn.response_id.as_deref(),
                 provider: turn.provider.as_deref().unwrap_or_default(),
                 model: turn.model.as_deref().unwrap_or_default(),
@@ -1110,7 +1112,7 @@ async fn cancel_turn_impl(
     let failed_payload = json!({
         "error": error_json.clone(),
     });
-    let (metadata, seq) = turn.runtime_state.bump_stream_seq();
+    let (next_runtime_state, seq) = turn.runtime_state.bump_stream_seq();
     let Some(turn) = update_turn_if_active(
         &state.db,
         turn.id,
@@ -1118,7 +1120,7 @@ async fn cancel_turn_impl(
             status: turn_status::FAILED,
             assistant_text: turn.assistant_text.as_deref(),
             turn_messages: &turn.turn_messages,
-            runtime_state: Some(&metadata.clear_pending()),
+            runtime_state: Some(&next_runtime_state.clear_pending()),
             response_id: turn.response_id.as_deref(),
             provider: turn.provider.as_deref().unwrap_or_default(),
             model: turn.model.as_deref().unwrap_or_default(),

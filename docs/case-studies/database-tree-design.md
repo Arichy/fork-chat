@@ -12,7 +12,7 @@ We needed a database schema that supports tree-structured conversations: every t
 - **Fork semantics.** A fork is not an explicit entity -- it emerges when two or more turns share the same `parent_turn_id`. The schema must make this natural rather than bolted on.
 - **Path reconstruction.** Given a leaf turn, we need to walk up to the root collecting all ancestor turns in chronological order. This is the "active branch" that becomes the LLM's conversation context.
 - **Retry vs. fork.** Retrying a turn (re-running with the same prompt) is semantically different from forking (continuing from a point with a new prompt). Both need to be represented.
-- **Runtime state.** Turns have complex lifecycle state (running, awaiting approval, completed, failed) plus per-turn JSON for the persisted execution metadata that must survive reconnects and approval round-trips.
+- **Runtime state.** Turns have complex lifecycle state (running, awaiting approval, completed, failed) plus per-turn JSON for the persisted runtime control state that must survive reconnects and approval round-trips.
 
 ## Alternatives Considered
 
@@ -126,14 +126,24 @@ Two JSONB columns deserve explanation:
 
 **`turn_messages`**: A protocol-native transcript array. Each entry is a `{ role, content }` object whose inner structure matches the session's protocol (OpenAI `InputItem`/`OutputItem` or Anthropic content blocks). This is built incrementally: user message on creation, assistant response after each LLM round, tool results after execution.
 
-**`runtime_state`**: Turn-scoped runtime data used by streaming and approvals. Contains:
-- `stream_seq`: Monotonically increasing sequence counter that bridges one snapshot to subsequent live SSE events
-- `pending_tool_calls`: Tool calls awaiting user approval
-- `approval_decisions`: User decisions from the approval flow
+**`runtime_state`**: Turn-scoped runtime control state used by streaming and the
+approval lifecycle. It is intentionally separate from user-facing turn content:
+
+- `turn_messages` stores the protocol-native transcript
+- `status` / `assistant_text` / `error` store the durable visible outcome
+- `runtime_state` stores the backend bookkeeping needed to resume or reconnect
+
+Current fields:
+
+- `stream_seq`: monotonically increasing sequence counter used as the durable
+  boundary between one snapshot and subsequent live SSE events
+- `pending_tool_calls`: exact tool calls currently waiting for user approval
+- `approval_decisions`: previously recorded approval decisions, keyed by
+  `pending_call_id`, so approval requests are idempotent
 
 On terminal transitions, `pending_tool_calls` is cleared, while `stream_seq`
-remains persisted so reconnecting clients can treat the snapshot as the
-authoritative baseline.
+and any recorded decisions remain persisted so reconnecting clients and
+follow-up approval requests can be interpreted safely.
 
 ### Startup Cleanup
 
