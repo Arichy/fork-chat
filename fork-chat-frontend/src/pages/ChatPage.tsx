@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useParams } from '@tanstack/react-router';
+import { useNavigate, useParams, useSearch } from '@tanstack/react-router';
 import { ReactFlowProvider } from '@xyflow/react';
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
@@ -11,16 +11,35 @@ import { useChatStore } from '../store';
 
 export function ChatPage() {
   const { sessionId } = useParams({ from: '/sessions/$sessionId' });
+  // Modal open-state is stored in the URL's `?turnId=...` search param so that
+  // a page refresh (or shared link) restores the same open modal. Presence of
+  // a `turnId` means the modal is open; absence means it's closed.
+  const { turnId: modalTurnId } = useSearch({
+    from: '/sessions/$sessionId',
+  });
+  const navigate = useNavigate({ from: '/sessions/$sessionId' });
   const queryClient = useQueryClient();
   const { selectedTurnId, setSelectedTurn } = useChatStore();
-  const [modalTurnId, setModalTurnId] = useState<string | null>(null);
-  const [isModalOpen, setIsModalOpen] = useState(false);
   const [pendingFailedTurn, setPendingFailedTurn] = useState<{
     text: string;
     provider: string;
     model: string;
     parentId: string | null;
   } | null>(null);
+
+  // Single helper that writes modal state to the URL. Using `replace: true`
+  // avoids piling up a history entry for every open/close, while still letting
+  // the browser back button step out of the session if the user wants.
+  const setModalTurn = useCallback(
+    (turnId: string | null) => {
+      navigate({
+        // `undefined` removes the key from the resulting URL.
+        search: (prev) => ({ ...prev, turnId: turnId ?? undefined }),
+        replace: true,
+      });
+    },
+    [navigate],
+  );
 
   const {
     data: sessionData,
@@ -61,10 +80,11 @@ export function ChatPage() {
       queryClient.invalidateQueries({ queryKey: ['sessions'] });
       setPendingFailedTurn(null);
       setSelectedTurn(result.turn.id);
-      setModalTurnId(
+      // Open the modal for streaming turns so the user sees progress;
+      // for already-completed turns we don't auto-open.
+      setModalTurn(
         isStreamingTurnStatus(result.turn.status) ? result.turn.id : null,
       );
-      setIsModalOpen(isStreamingTurnStatus(result.turn.status));
     },
     onError: (error, variables) => {
       queryClient.invalidateQueries({ queryKey: ['tree', sessionId] });
@@ -90,10 +110,11 @@ export function ChatPage() {
     onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ['tree', sessionId] });
       setSelectedTurn(result.turn.id);
-      setModalTurnId(
+      // Same rationale as sendMutation: only auto-open while the retry is
+      // still streaming.
+      setModalTurn(
         isStreamingTurnStatus(result.turn.status) ? result.turn.id : null,
       );
-      setIsModalOpen(isStreamingTurnStatus(result.turn.status));
     },
     onError: (error) => {
       toast.error(error instanceof Error ? error.message : 'Retry failed');
@@ -117,8 +138,9 @@ export function ChatPage() {
     onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ['tree', sessionId] });
       setSelectedTurn(result.turn.id);
-      setModalTurnId(result.turn.id);
-      setIsModalOpen(true);
+      // Keep the modal open on the same turn so the user sees the tool result
+      // land after approval.
+      setModalTurn(result.turn.id);
     },
     onError: (error) => {
       toast.error(error instanceof Error ? error.message : 'Approve failed');
@@ -131,8 +153,8 @@ export function ChatPage() {
     onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ['tree', sessionId] });
       setSelectedTurn(result.turn.id);
-      setModalTurnId(result.turn.id);
-      setIsModalOpen(true);
+      // Keep the modal open on the cancelled turn so the user can retry it.
+      setModalTurn(result.turn.id);
     },
     onError: (error) => {
       toast.error(error instanceof Error ? error.message : 'Cancel failed');
@@ -149,7 +171,7 @@ export function ChatPage() {
 
   useTurnStream({
     sessionId,
-    turnId: modalTurnId,
+    turnId: modalTurnId ?? null,
     turnStatus: modalTurnStatus,
     queryClient,
   });
@@ -175,26 +197,28 @@ export function ChatPage() {
     if (!candidate) return;
 
     setSelectedTurn(candidate.id);
-    setModalTurnId(candidate.id);
-    setIsModalOpen(true);
+    // Open the modal on the freshly-observed failed turn so the user can
+    // retry immediately. Driven through the URL so a refresh preserves it.
+    setModalTurn(candidate.id);
     setPendingFailedTurn(null);
-  }, [pendingFailedTurn, setSelectedTurn, turns]);
+  }, [pendingFailedTurn, setSelectedTurn, setModalTurn, turns]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: sessionId is the reset trigger; its value is not needed inside the effect body.
   useEffect(() => {
+    // Reset in-memory state on session switch. We intentionally don't clear
+    // the URL's `turnId` here: navigating between sessions produces a new URL
+    // without that param, and if a user navigates to a session URL that *does*
+    // carry `?turnId=...` (e.g. a shared link) we want to honor it.
     setSelectedTurn(null);
-    setModalTurnId(null);
-    setIsModalOpen(false);
     setPendingFailedTurn(null);
   }, [sessionId, setSelectedTurn]);
 
   const handleSelectTurn = useCallback(
     (id: string) => {
       setSelectedTurn(id);
-      setModalTurnId(id);
-      setIsModalOpen(true);
+      setModalTurn(id);
     },
-    [setSelectedTurn],
+    [setSelectedTurn, setModalTurn],
   );
 
   const handleSend = (
@@ -265,9 +289,11 @@ export function ChatPage() {
         <TurnDetailModal
           turn={modalTurn}
           protocol={protocol}
-          open={isModalOpen && modalTurnId !== null}
+          // Single source of truth: the URL param drives whether the modal
+          // is open. Closing the modal clears the param; opening it sets it.
+          open={modalTurnId != null}
           onOpenChange={(open) => {
-            setIsModalOpen(open);
+            if (!open) setModalTurn(null);
           }}
           onSend={handleSend}
           onRetry={handleRetry}

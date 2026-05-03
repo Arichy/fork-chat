@@ -1,15 +1,59 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import * as React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ConfigResponse, Turn } from '../api/types';
 import { makeSession, makeTurn } from '../test/fixtures';
 import { ChatPage } from './ChatPage';
 
-// Mock TanStack Router so ChatPage can call useParams without a real router.
-vi.mock('@tanstack/react-router', () => ({
-  useParams: () => ({ sessionId: 'session-1' }),
+// Stateful mock for TanStack Router so `useSearch` / `useNavigate` can
+// simulate real URL search-param reactivity: ChatPage now stores the modal's
+// open state in `?turnId=...`, so the modal only appears when a navigation
+// triggers a re-read of `useSearch`.
+const { routerState, routerListeners } = vi.hoisted(() => ({
+  routerState: { turnId: undefined as string | undefined },
+  routerListeners: new Set<() => void>(),
 }));
+
+vi.mock('@tanstack/react-router', () => {
+  return {
+    useParams: () => ({ sessionId: 'session-1' }),
+    useSearch: () => {
+      // Force a re-render whenever any test-driven navigate() happens so that
+      // components reading `useSearch` observe the new value. We reuse the
+      // top-level React import to avoid the "two copies of React" issue that
+      // appears when `vi.importActual('react')` resolves a separate instance.
+      const [, force] = React.useState(0);
+      React.useEffect(() => {
+        const listener = () => force((x) => x + 1);
+        routerListeners.add(listener);
+        return () => {
+          routerListeners.delete(listener);
+        };
+      }, []);
+      // Return a fresh object each call so ref equality doesn't mislead any
+      // downstream memoization.
+      return { turnId: routerState.turnId };
+    },
+    useNavigate:
+      () =>
+      (opts: {
+        search?:
+          | { turnId?: string }
+          | ((prev: { turnId?: string }) => { turnId?: string });
+        replace?: boolean;
+      }) => {
+        if (!opts || !('search' in opts)) return;
+        const prev = { turnId: routerState.turnId };
+        const next =
+          typeof opts.search === 'function' ? opts.search(prev) : opts.search;
+        routerState.turnId = next?.turnId;
+        // Notify every mounted useSearch subscriber to re-render.
+        for (const listener of routerListeners) listener();
+      },
+  };
+});
 
 // Mock toast so error branches don't blow up without a <Toaster />.
 vi.mock('sonner', () => ({ toast: { error: vi.fn() } }));
@@ -71,6 +115,8 @@ function renderPage() {
 
 describe('ChatPage', () => {
   beforeEach(() => {
+    // Each test starts with a clean URL (no modal open).
+    routerState.turnId = undefined;
     turnsApi.create.mockReset();
     turnsApi.retry.mockReset();
     turnsApi.approve.mockReset();
@@ -192,5 +238,48 @@ describe('ChatPage', () => {
     turnsApi.tree.mockResolvedValue({ turns: [failed] });
     renderPage();
     expect(await screen.findByText('failed attempt')).toBeInTheDocument();
+  });
+
+  it('restores the detail modal when the URL already has a turnId (refresh)', async () => {
+    // Simulate landing on `/sessions/session-1?turnId=persisted-1`, i.e. a
+    // page refresh after the user had the modal open. The router state is
+    // seeded before render so the first paint already shows the modal.
+    const persisted = makeTurn({
+      id: 'persisted-1',
+      user_text: 'hello from the past',
+      status: 'completed',
+    });
+    turnsApi.tree.mockResolvedValue({ turns: [persisted] });
+    routerState.turnId = 'persisted-1';
+
+    renderPage();
+
+    // The modal renders the turn's user_text in its DialogTitle (truncated to
+    // 80 chars). Finding it confirms the modal opened purely from the URL.
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog).toHaveTextContent('hello from the past');
+  });
+
+  it('clears ?turnId from the URL when the modal is closed', async () => {
+    const persisted = makeTurn({
+      id: 'persisted-2',
+      user_text: 'closing flow',
+      status: 'completed',
+    });
+    turnsApi.tree.mockResolvedValue({ turns: [persisted] });
+    routerState.turnId = 'persisted-2';
+
+    renderPage();
+
+    // Wait for the modal to render from the seeded URL state.
+    await screen.findByRole('dialog');
+    // Close via the radix/base-ui Dialog close control. We press Escape since
+    // it's the most robust way to trigger onOpenChange(false) in jsdom/browser
+    // without depending on a specific close-button label.
+    await userEvent.setup().keyboard('{Escape}');
+
+    await waitFor(() => {
+      expect(routerState.turnId).toBeUndefined();
+    });
   });
 });
