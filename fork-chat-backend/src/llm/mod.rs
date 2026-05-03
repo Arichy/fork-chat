@@ -67,10 +67,22 @@ impl ProviderRegistry {
     /// Same as [`Self::from_config`] but with explicit backoff / timeout tuning.
     /// Useful in tests (e.g. zero-retry to avoid hangs on simulated 5xx).
     pub fn from_config_with(config: &Config, opts: RegistryOptions) -> Self {
+        // Two-level HashMap: outer key is the wire protocol (OpenAI / Anthropic),
+        // inner key is the provider name from config (e.g. "openai", "deepseek",
+        // "anthropic"). This mirrors how the session layer dispatches — it already
+        // knows both the protocol and the provider name for a given turn, so the
+        // double lookup is O(1).
         let mut entries: HashMap<Protocol, HashMap<String, Arc<dyn ChatAdapter>>> = HashMap::new();
 
         for provider in &config.providers {
+            // A single provider config entry can expose multiple protocols, but in
+            // practice each provider speaks exactly one wire protocol.  The loop
+            // iterates over whatever `protocols` map the config declares.
             for (&protocol, binding) in &provider.protocols {
+                // DeepSeek, GLM, Kimi, and other OpenAI-compatible providers all
+                // land on the `Protocol::Openai` arm here — they share the same
+                // OpenAI adapter.  No per-vendor adapter is needed; only the
+                // `base_url` and `api_key` differ.
                 let adapter: Arc<dyn ChatAdapter> = match protocol {
                     Protocol::Openai => Arc::new(openai::OpenaiAdapter::new(
                         &binding.base_url,
@@ -93,6 +105,9 @@ impl ProviderRegistry {
         Self { entries }
     }
 
+    /// Look up a concrete adapter by wire protocol and provider name.
+    /// Returns `None` if the (protocol, provider) pair was not present in the
+    /// config at startup — this would indicate a misconfigured session.
     pub fn get(&self, protocol: Protocol, provider_name: &str) -> Option<Arc<dyn ChatAdapter>> {
         self.entries
             .get(&protocol)
@@ -106,7 +121,11 @@ impl ProviderRegistry {
 /// cause long retry waits.
 #[derive(Debug, Clone)]
 pub struct RegistryOptions {
+    /// When `true`, the OpenAI adapter's backoff is set to zero elapsed time.
+    /// This prevents the `async-openai` crate from retrying on 5xx errors,
+    /// which would cause wiremock-based tests to hang for up to 15 minutes.
     pub openai_no_retry: bool,
+    /// HTTP timeout applied to the Anthropic `reqwest` client.
     pub anthropic_timeout: Duration,
 }
 

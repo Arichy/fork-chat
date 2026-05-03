@@ -55,3 +55,35 @@ In short: new hard problem → write a case study; changed an already-documented
 Write detailed comments if possible.
 
 - For Rust, write doc comments for every function/method/struct field
+
+# Code Style: Comments
+
+- Do NOT only write documentation comments on function signatures.
+- You MUST add inline comments inside function bodies.
+
+## When to add inline comments
+
+For any non-trivial logic, you MUST explain:
+
+- why the logic exists (not just what it does)
+- edge cases being handled
+- invariants or assumptions
+- tricky control flow or branching
+- non-obvious performance considerations
+
+## What counts as "non-trivial logic"
+
+You MUST add inline comments for:
+
+- complex conditionals (if/else with business logic)
+- loops with non-obvious behavior
+- state mutations
+- error handling branches
+- concurrency / async logic
+- parsing / transformation logic
+
+## Style of inline comments
+
+- Prefer short comments above the code block they explain
+- Focus on "why", not just "what"
+- Avoid obvious comments like `// increment i`

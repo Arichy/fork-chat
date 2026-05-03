@@ -1,3 +1,14 @@
+//! HTTP request handlers, organized by resource.
+//!
+//! - [`config`] — read-only endpoint that exposes available protocols,
+//!   providers, models, and tools for frontend UI initialization.
+//! - [`sessions`] — CRUD handlers for conversation sessions.
+//! - [`turns`] — turn lifecycle handlers: create, read, retry, stream (SSE),
+//!   approve, and cancel.
+//!
+//! All handlers accept [`AppState`](crate::config::AppState) via axum's
+//! `State` extractor and return `Result<Json<T>, AppError>`.
+
 pub mod config;
 pub mod sessions;
 pub mod turns;
