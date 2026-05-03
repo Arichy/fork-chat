@@ -143,4 +143,9 @@ export const handlers = [
       }),
     });
   }),
+
+  http.post(`${API_BASE}/sessions/batch-delete`, async ({ request }) => {
+    const body = (await request.json()) as { ids: string[] };
+    return HttpResponse.json({ deleted: body.ids.length });
+  }),
 ];

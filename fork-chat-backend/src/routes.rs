@@ -30,10 +30,10 @@ use axum::{
 
 use crate::config::AppState;
 use crate::handlers::{
-    approve_turn_handler, cancel_turn_handler, create_session_handler, create_turn_handler,
-    delete_session_handler, get_config_handler, get_session_handler, get_session_tree_handler,
-    get_turn_handler, list_sessions_handler, retry_turn_handler, stream_turn_handler,
-    update_session_handler,
+    approve_turn_handler, batch_delete_sessions_handler, cancel_turn_handler,
+    create_session_handler, create_turn_handler, delete_session_handler, get_config_handler,
+    get_session_handler, get_session_tree_handler, get_turn_handler, list_sessions_handler,
+    retry_turn_handler, stream_turn_handler, update_session_handler,
 };
 
 /// Build the complete axum `Router` with all API routes mounted.
@@ -48,6 +48,11 @@ pub fn create_routes(state: AppState) -> Router {
         // providers, models, and tools at startup.
         .route("/api/config", get(get_config_handler))
         // --- Sessions CRUD ---
+        // Batch delete — must be mounted before /{id} to avoid path-param collision.
+        .route(
+            "/api/sessions/batch-delete",
+            post(batch_delete_sessions_handler),
+        )
         .route("/api/sessions", post(create_session_handler))
         .route("/api/sessions", get(list_sessions_handler))
         .route("/api/sessions/{id}", get(get_session_handler))

@@ -19,7 +19,9 @@ use uuid::Uuid;
 
 use crate::config::{AppState, Protocol};
 use crate::db::sessions::update_session_title;
-use crate::db::{SessionSort, create_session, delete_session, get_session, list_sessions};
+use crate::db::{
+    SessionSort, batch_delete_sessions, create_session, delete_session, get_session, list_sessions,
+};
 use crate::error::AppError;
 use crate::models::Session;
 
@@ -195,6 +197,44 @@ pub async fn delete_session_handler(
 ) -> Result<Json<serde_json::Value>, AppError> {
     delete_session(&state.db, id).await?;
     Ok(Json(serde_json::json!({ "deleted": true })))
+}
+
+/// Request body for `POST /api/sessions/batch-delete`.
+#[derive(Debug, Deserialize)]
+pub struct BatchDeleteRequest {
+    /// Session ids to delete. Must be non-empty and at most 100.
+    pub ids: Vec<Uuid>,
+}
+
+/// Response body for `POST /api/sessions/batch-delete`.
+#[derive(Debug, Serialize)]
+pub struct BatchDeleteResponse {
+    /// Number of sessions actually deleted (may be less than requested
+    /// if some ids don't exist).
+    pub deleted: u64,
+}
+
+/// `POST /api/sessions/batch-delete` — delete multiple sessions.
+///
+/// Validates the `ids` array (non-empty, max 100), then delegates to
+/// `batch_delete_sessions` which runs a single `DELETE ... WHERE id = ANY($1)`.
+/// The ON DELETE CASCADE on turns handles related data automatically.
+pub async fn batch_delete_sessions_handler(
+    State(state): State<AppState>,
+    Json(req): Json<BatchDeleteRequest>,
+) -> Result<Json<BatchDeleteResponse>, AppError> {
+    if req.ids.is_empty() {
+        return Err(AppError::BadRequest(
+            "ids array must not be empty".to_string(),
+        ));
+    }
+    if req.ids.len() > 100 {
+        return Err(AppError::BadRequest(
+            "ids array must contain at most 100 items".to_string(),
+        ));
+    }
+    let deleted = batch_delete_sessions(&state.db, &req.ids).await?;
+    Ok(Json(BatchDeleteResponse { deleted }))
 }
 
 #[derive(Debug, Deserialize)]

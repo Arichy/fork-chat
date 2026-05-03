@@ -15,8 +15,8 @@ pub mod turns;
 
 pub use config::get_config_handler;
 pub use sessions::{
-    create_session_handler, delete_session_handler, get_session_handler, list_sessions_handler,
-    update_session_handler,
+    batch_delete_sessions_handler, create_session_handler, delete_session_handler,
+    get_session_handler, list_sessions_handler, update_session_handler,
 };
 pub use turns::{
     approve_turn_handler, cancel_turn_handler, create_turn_handler, get_session_tree_handler,

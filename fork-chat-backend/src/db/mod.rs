@@ -35,7 +35,7 @@ pub mod turns;
 
 pub use pool::create_pool;
 pub use sessions::{
-    SessionSort, create_session, delete_session, get_session, list_sessions,
+    SessionSort, batch_delete_sessions, create_session, delete_session, get_session, list_sessions,
     touch_session_updated_at,
 };
 pub use turns::{

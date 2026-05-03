@@ -159,6 +159,18 @@ export interface SessionsPageResponse {
   next_cursor: SessionsPageCursor | null;
 }
 
+/** Request body for `POST /api/sessions/batch-delete`. */
+export interface BatchDeleteRequest {
+  /** Session ids to delete. Non-empty, max 100. */
+  ids: string[];
+}
+
+/** Response from `POST /api/sessions/batch-delete`. */
+export interface BatchDeleteResponse {
+  /** Number of sessions actually deleted. */
+  deleted: number;
+}
+
 /** Request body for `POST /api/sessions/{id}/turns`. */
 export interface CreateTurnRequest {
   /** Parent turn to fork from. If omitted, appends to the latest turn. */

@@ -9,12 +9,14 @@ import {
   Link,
   Outlet,
   useNavigate,
+  useParams,
 } from '@tanstack/react-router';
 import {
   Ellipsis,
   MessageSquare,
   PanelLeftClose,
   PanelLeftOpen,
+  Pencil,
   Plus,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -22,6 +24,7 @@ import { Toaster } from 'sonner';
 import { api } from '../api';
 import type { Protocol, SessionsSort } from '../api/types';
 import { Button } from '../components/ui/button';
+import { Checkbox } from '../components/ui/checkbox';
 import {
   Dialog,
   DialogContent,
@@ -121,9 +124,18 @@ export const Route = createRootRoute({
   component: RootComponent,
 });
 
-function SessionSidebar() {
+export function SessionSidebar() {
   const qc = useQueryClient();
   const navigate = useNavigate();
+  // Read the current session id from the active route match. `strict: false`
+  // means this returns the params of whatever route is currently matched,
+  // so `sessionId` is present on `/sessions/$sessionId` and undefined otherwise.
+  // This replaces ad-hoc `window.location.pathname` parsing, which can
+  // mis-handle trailing slashes or query strings.
+  const routeParams = useParams({ strict: false }) as {
+    sessionId?: string;
+  };
+  const currentSessionId = routeParams.sessionId;
   const { setSelectedTurn } = useChatStore();
   const [collapsed, setCollapsed] = useState(false);
   const [renamingId, setRenamingId] = useState<string | null>(null);
@@ -141,6 +153,13 @@ function SessionSidebar() {
   const lastDeleteTitleRef = useRef<string>('');
   if (pendingDelete) lastDeleteTitleRef.current = pendingDelete.title;
   const deleteDialogTitle = pendingDelete?.title ?? lastDeleteTitleRef.current;
+
+  // Selection mode state for batch operations.
+  const [isSelectionMode, setIsSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [pendingBatchDeleteCount, setPendingBatchDeleteCount] = useState<
+    number | null
+  >(null);
   useEffect(() => {
     const timer = setTimeout(() => {
       setDebouncedTitleFilter(titleFilter);
@@ -224,6 +243,25 @@ function SessionSidebar() {
     },
   });
 
+  const batchDeleteMutation = useMutation({
+    mutationFn: (ids: string[]) => api.sessions.batchDelete(ids),
+    onSuccess: (_result, deletedIds) => {
+      qc.invalidateQueries({ queryKey: ['sessions'] });
+      setSelectedTurn(null);
+      // If the currently-viewed session was in the deleted batch, jump to home
+      // so the user isn't left on a 404'd session detail page. `currentSessionId`
+      // comes from the router's matched params (see `useParams` above), which is
+      // always in sync with the active route — no URL parsing required.
+      if (currentSessionId && deletedIds.includes(currentSessionId)) {
+        navigate({ to: '/' });
+      }
+      // Exit selection mode after successful delete.
+      setIsSelectionMode(false);
+      setSelectedIds(new Set());
+      setPendingBatchDeleteCount(null);
+    },
+  });
+
   const renameMutation = useMutation({
     mutationFn: ({ id, title }: { id: string; title: string }) =>
       api.sessions.updateTitle(id, title),
@@ -249,6 +287,43 @@ function SessionSidebar() {
     }
   };
 
+  const handleBatchDelete = () => {
+    if (selectedIds.size > 0) {
+      setPendingBatchDeleteCount(selectedIds.size);
+    }
+  };
+
+  const confirmBatchDelete = () => {
+    if (pendingBatchDeleteCount !== null) {
+      batchDeleteMutation.mutate(Array.from(selectedIds));
+    }
+  };
+
+  const exitSelectionMode = () => {
+    setIsSelectionMode(false);
+    setSelectedIds(new Set());
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedIds.size === allSessions.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(allSessions.map((s) => s.id)));
+    }
+  };
+
+  const toggleSelectSession = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
   if (collapsed) {
     return (
       <div className="h-full bg-zinc-900 text-zinc-100 flex flex-col items-center py-3 w-12 border-r border-zinc-800">
@@ -259,6 +334,21 @@ function SessionSidebar() {
           title="Expand sidebar"
         >
           <PanelLeftOpen className="size-4" />
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setIsSelectionMode(!isSelectionMode);
+            if (isSelectionMode) setSelectedIds(new Set());
+          }}
+          className={`p-1.5 rounded-md mb-2 transition-colors cursor-pointer ${
+            isSelectionMode
+              ? 'text-zinc-100 bg-zinc-700'
+              : 'text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800'
+          }`}
+          title={isSelectionMode ? 'Exit selection' : 'Batch select'}
+        >
+          <Pencil className="size-4" />
         </button>
         <button
           type="button"
@@ -278,14 +368,31 @@ function SessionSidebar() {
       <div className="p-3 border-b border-zinc-800">
         <div className="flex items-center justify-between">
           <h1 className="font-semibold tracking-tight">Fork Chat</h1>
-          <button
-            type="button"
-            onClick={() => setCollapsed(true)}
-            className="p-1 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 rounded-md transition-colors cursor-pointer"
-            title="Collapse sidebar"
-          >
-            <PanelLeftClose className="size-4" />
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => {
+                setIsSelectionMode(!isSelectionMode);
+                if (isSelectionMode) setSelectedIds(new Set());
+              }}
+              className={`p-1 rounded-md transition-colors cursor-pointer ${
+                isSelectionMode
+                  ? 'text-zinc-100 bg-zinc-700'
+                  : 'text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800'
+              }`}
+              title={isSelectionMode ? 'Exit selection' : 'Batch select'}
+            >
+              <Pencil className="size-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setCollapsed(true)}
+              className="p-1 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 rounded-md transition-colors cursor-pointer"
+              title="Collapse sidebar"
+            >
+              <PanelLeftClose className="size-4" />
+            </button>
+          </div>
         </div>
         <div className="mt-2 space-y-1.5">
           <p className="px-0.5 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
@@ -332,50 +439,68 @@ function SessionSidebar() {
             </Button>
           </div>
         </div>
-        <div className="mt-2 space-y-1.5">
-          <p className="px-0.5 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
-            Sort
-          </p>
-          <Select
-            value={sortBy}
-            onValueChange={(v) => setSortBy(v as SessionsSort)}
-          >
-            <SelectTrigger
-              className="h-8 rounded-xl border border-zinc-700/80 bg-zinc-800/90 px-3 text-xs font-medium text-zinc-100 shadow-inner shadow-black/20 transition-colors hover:bg-zinc-700/90 focus-visible:border-zinc-500 focus-visible:ring-2 focus-visible:ring-zinc-500/40"
+        {isSelectionMode ? (
+          <div className="mt-2 flex items-center justify-between">
+            <Button
+              variant="ghost"
               size="sm"
-              aria-label="Session list sort"
+              onClick={exitSelectionMode}
+              className="text-xs text-zinc-400 hover:text-zinc-100 px-1"
             >
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent
-              sideOffset={6}
-              align="start"
-              alignItemWithTrigger={false}
-              className="w-[--anchor-width] min-w-[--anchor-width] rounded-xl border border-zinc-700 bg-zinc-900/95 p-1 text-zinc-100 shadow-2xl shadow-black/45 backdrop-blur-sm"
-            >
-              {SESSION_SORT_OPTIONS.map((opt) => (
-                <SelectItem
-                  key={opt.value}
-                  value={opt.value}
-                  className="rounded-lg py-1.5 pr-8 pl-3 text-sm font-medium text-zinc-200 focus:bg-zinc-800 focus:!text-zinc-50 data-[selected]:bg-zinc-800/80 data-[selected]:!text-zinc-50 data-[highlighted]:bg-zinc-800 data-[highlighted]:!text-zinc-50 [&_svg]:text-zinc-300 data-[selected]:[&_svg]:text-zinc-100 data-[highlighted]:[&_svg]:text-zinc-100"
+              Cancel
+            </Button>
+            <span className="text-xs text-zinc-400">
+              {selectedIds.size} selected
+            </span>
+          </div>
+        ) : (
+          <>
+            <div className="mt-2 space-y-1.5">
+              <p className="px-0.5 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
+                Sort
+              </p>
+              <Select
+                value={sortBy}
+                onValueChange={(v) => setSortBy(v as SessionsSort)}
+              >
+                <SelectTrigger
+                  className="h-8 rounded-xl border border-zinc-700/80 bg-zinc-800/90 px-3 text-xs font-medium text-zinc-100 shadow-inner shadow-black/20 transition-colors hover:bg-zinc-700/90 focus-visible:border-zinc-500 focus-visible:ring-2 focus-visible:ring-zinc-500/40"
+                  size="sm"
+                  aria-label="Session list sort"
                 >
-                  {opt.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="mt-2 space-y-1.5">
-          <p className="px-0.5 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
-            Filter (title)
-          </p>
-          <Input
-            value={titleFilter}
-            onChange={(e) => setTitleFilter(e.target.value)}
-            placeholder="Filter titles..."
-            className="h-8 rounded-xl border border-zinc-700/80 bg-zinc-800/80 px-3 text-xs text-zinc-100 placeholder:text-zinc-500 focus-visible:border-zinc-500 focus-visible:ring-2 focus-visible:ring-zinc-500/30"
-          />
-        </div>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent
+                  sideOffset={6}
+                  align="start"
+                  alignItemWithTrigger={false}
+                  className="w-[--anchor-width] min-w-[--anchor-width] rounded-xl border border-zinc-700 bg-zinc-900/95 p-1 text-zinc-100 shadow-2xl shadow-black/45 backdrop-blur-sm"
+                >
+                  {SESSION_SORT_OPTIONS.map((opt) => (
+                    <SelectItem
+                      key={opt.value}
+                      value={opt.value}
+                      className="rounded-lg py-1.5 pr-8 pl-3 text-sm font-medium text-zinc-200 focus:bg-zinc-800 focus:!text-zinc-50 data-[selected]:bg-zinc-800/80 data-[selected]:!text-zinc-50 data-[highlighted]:bg-zinc-800 data-[highlighted]:!text-zinc-50 [&_svg]:text-zinc-300 data-[selected]:[&_svg]:text-zinc-100 data-[highlighted]:[&_svg]:text-zinc-100"
+                    >
+                      {opt.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="mt-2 space-y-1.5">
+              <p className="px-0.5 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
+                Filter (title)
+              </p>
+              <Input
+                value={titleFilter}
+                onChange={(e) => setTitleFilter(e.target.value)}
+                placeholder="Filter titles..."
+                className="h-8 rounded-xl border border-zinc-700/80 bg-zinc-800/80 px-3 text-xs text-zinc-100 placeholder:text-zinc-500 focus-visible:border-zinc-500 focus-visible:ring-2 focus-visible:ring-zinc-500/30"
+              />
+            </div>
+          </>
+        )}
       </div>
 
       <div
@@ -396,6 +521,20 @@ function SessionSidebar() {
         {error && (
           <div className="p-3 text-xs text-red-400">
             Error: {error instanceof Error ? error.message : 'Failed to load'}
+          </div>
+        )}
+
+        {allSessions.length > 0 && isSelectionMode && (
+          <div className="flex items-center gap-2 px-2.5 py-1 mb-1">
+            <Checkbox
+              checked={
+                allSessions.length > 0 &&
+                selectedIds.size === allSessions.length
+              }
+              onCheckedChange={toggleSelectAll}
+              className="border-zinc-600 data-checked:bg-zinc-100 data-checked:border-zinc-100"
+            />
+            <span className="text-[11px] text-zinc-500">Select all</span>
           </div>
         )}
 
@@ -423,7 +562,18 @@ function SessionSidebar() {
                             setSelectedTurn(null);
                           }}
                         >
-                          <MessageSquare className="size-3.5 shrink-0 text-zinc-500 group-hover/row:text-zinc-400" />
+                          {isSelectionMode ? (
+                            <Checkbox
+                              checked={selectedIds.has(session.id)}
+                              onCheckedChange={() =>
+                                toggleSelectSession(session.id)
+                              }
+                              onClick={(e) => e.preventDefault()}
+                              className="border-zinc-600 data-checked:bg-zinc-100 data-checked:border-zinc-100 shrink-0"
+                            />
+                          ) : (
+                            <MessageSquare className="size-3.5 shrink-0 text-zinc-500 group-hover/row:text-zinc-400" />
+                          )}
                           {renamingId === session.id ? (
                             <input
                               autoFocus
@@ -474,38 +624,40 @@ function SessionSidebar() {
                           )}
                         </Link>
 
-                        <div className="absolute right-1 top-1/2 -translate-y-1/2 opacity-0 group-hover/row:opacity-100 focus-within:opacity-100 transition-opacity">
-                          <DropdownMenu>
-                            <DropdownMenuTrigger>
-                              <button
-                                type="button"
-                                onClick={(e) => e.preventDefault()}
-                                className="p-1 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-700 rounded-md cursor-pointer"
-                              >
-                                <Ellipsis className="size-3.5" />
-                              </button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end" className="w-32">
-                              <DropdownMenuItem
-                                onClick={(e) => {
-                                  e.preventDefault();
-                                  handleRename(session.id, session.title);
-                                }}
-                              >
-                                Rename
-                              </DropdownMenuItem>
-                              <DropdownMenuItem
-                                variant="destructive"
-                                onClick={(e) => {
-                                  e.preventDefault();
-                                  handleDelete(session.id, session.title);
-                                }}
-                              >
-                                Delete
-                              </DropdownMenuItem>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                        </div>
+                        {!isSelectionMode && (
+                          <div className="absolute right-1 top-1/2 -translate-y-1/2 opacity-0 group-hover/row:opacity-100 focus-within:opacity-100 transition-opacity">
+                            <DropdownMenu>
+                              <DropdownMenuTrigger>
+                                <button
+                                  type="button"
+                                  onClick={(e) => e.preventDefault()}
+                                  className="p-1 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-700 rounded-md cursor-pointer"
+                                >
+                                  <Ellipsis className="size-3.5" />
+                                </button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end" className="w-32">
+                                <DropdownMenuItem
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    handleRename(session.id, session.title);
+                                  }}
+                                >
+                                  Rename
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  variant="destructive"
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    handleDelete(session.id, session.title);
+                                  }}
+                                >
+                                  Delete
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -527,6 +679,22 @@ function SessionSidebar() {
           </div>
         )}
       </div>
+
+      {isSelectionMode && selectedIds.size > 0 && (
+        <div className="p-3 border-t border-zinc-800 flex items-center justify-between bg-zinc-900">
+          <span className="text-xs text-zinc-400">
+            {selectedIds.size} selected
+          </span>
+          <Button
+            variant="destructive"
+            size="sm"
+            onClick={handleBatchDelete}
+            className="text-xs"
+          >
+            Delete {selectedIds.size}
+          </Button>
+        </div>
+      )}
 
       <Dialog
         open={pendingDelete !== null}
@@ -552,6 +720,40 @@ function SessionSidebar() {
               disabled={deleteMutation.isPending}
             >
               {deleteMutation.isPending ? 'Deleting...' : 'Delete'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={pendingBatchDeleteCount !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingBatchDeleteCount(null);
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>
+              Delete {pendingBatchDeleteCount} sessions?
+            </DialogTitle>
+            <DialogDescription>
+              {pendingBatchDeleteCount} sessions and all of their messages will
+              be permanently removed. This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="secondary"
+              onClick={() => setPendingBatchDeleteCount(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={confirmBatchDelete}
+              disabled={batchDeleteMutation.isPending}
+            >
+              {batchDeleteMutation.isPending ? 'Deleting...' : 'Delete'}
             </Button>
           </DialogFooter>
         </DialogContent>

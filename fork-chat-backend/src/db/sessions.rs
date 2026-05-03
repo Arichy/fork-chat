@@ -147,6 +147,25 @@ pub async fn delete_session(db: &PgPool, id: Uuid) -> Result<()> {
     Ok(())
 }
 
+/// Delete multiple sessions in a single query.
+///
+/// Uses `ANY($1)` to delete all sessions whose id is in the provided set.
+/// The `ON DELETE CASCADE` foreign key on `turns.session_id` ensures all
+/// associated turns are removed automatically. Returns the number of rows
+/// actually deleted — this may be less than `ids.len()` if some ids don't
+/// exist in the database.
+///
+/// Duplicate ids in the input are deduplicated by Postgres (`= ANY` treats
+/// duplicates as a single match), so the caller doesn't need to dedup.
+pub async fn batch_delete_sessions(db: &PgPool, ids: &[Uuid]) -> Result<u64> {
+    let result = sqlx::query("DELETE FROM sessions WHERE id = ANY($1)")
+        .bind(ids)
+        .execute(db)
+        .await
+        .map_err(|e| AppError::DatabaseError(format!("Failed to batch delete sessions: {}", e)))?;
+    Ok(result.rows_affected())
+}
+
 /// Update the session's user-visible title.
 ///
 /// Also bumps `updated_at` so the session moves to the top of the

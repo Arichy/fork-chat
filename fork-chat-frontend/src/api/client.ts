@@ -101,6 +101,16 @@ export const api = {
     delete: (id: string) =>
       fetchApi<{ deleted: boolean }>(`/sessions/${id}`, { method: 'DELETE' }),
 
+    /** `POST /api/sessions/batch-delete` — delete multiple sessions. */
+    batchDelete: (ids: string[]) =>
+      fetchApi<import('./types').BatchDeleteResponse>(
+        '/sessions/batch-delete',
+        {
+          method: 'POST',
+          body: JSON.stringify({ ids }),
+        },
+      ),
+
     /** `PATCH /api/sessions/{id}` — update a session's title. */
     updateTitle: (id: string, title: string) =>
       fetchApi<{ session: import('./types').Session }>(`/sessions/${id}`, {
