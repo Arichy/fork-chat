@@ -2,6 +2,8 @@ use axum::Json;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use serde_json::json;
+use std::error::Error;
+use std::panic::Location;
 
 /// Convenience alias so handlers can return `Result<Json<T>, AppError>` without
 /// spelling out the full path every time.
@@ -38,7 +40,7 @@ pub enum AppError {
     /// Maps to **502 Bad Gateway** (we acted as a proxy and the upstream
     /// responded with an error).
     #[error("LLM API error: {0}")]
-    LlmApiError(String),
+    LlmApiError(#[source] eyre::Report),
 
     /// An unexpected database error (constraint violation, connection lost,
     /// serialization failure, etc.).  These are internal issues.
@@ -53,6 +55,53 @@ pub enum AppError {
     /// Maps to **500 Internal Server Error**.
     #[error("Internal error: {0}")]
     Internal(#[from] eyre::Report),
+}
+
+impl AppError {
+    /// Build an LLM API error while recording the call site that created it.
+    #[track_caller]
+    pub fn llm_api(message: impl Into<String>) -> Self {
+        let location = Location::caller();
+        let message = format_with_location(message.into(), location);
+        AppError::LlmApiError(eyre::eyre!(message))
+    }
+
+    /// Build an LLM API error with a source error chain and creation location.
+    #[track_caller]
+    pub fn llm_api_with_source(
+        message: impl Into<String>,
+        source: impl Error + Send + Sync + 'static,
+    ) -> Self {
+        let location = Location::caller();
+        let message = format_with_location(message.into(), location);
+
+        // The outer context carries our adapter/lifecycle location, while the
+        // wrapped source keeps provider or parser details available to logs.
+        AppError::LlmApiError(eyre::Report::new(source).wrap_err(message))
+    }
+
+    /// Return a Display-formatted source chain suitable for JSON diagnostics.
+    pub fn diagnostic_chain(&self) -> Vec<String> {
+        let mut chain = vec![self.to_string()];
+        let mut source = self.source();
+
+        // Walk the standard Error::source chain so failed turns can show which
+        // provider/client/parser layer produced the final user-visible error.
+        while let Some(error) = source {
+            chain.push(error.to_string());
+            source = error.source();
+        }
+
+        chain
+    }
+}
+
+fn format_with_location(message: String, location: &'static Location<'static>) -> String {
+    format!(
+        "{message} (origin: {}:{})",
+        location.file(),
+        location.line()
+    )
 }
 
 /// Convert sqlx errors into typed `AppError` variants.

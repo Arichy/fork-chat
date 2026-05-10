@@ -1079,7 +1079,14 @@ async fn spawn_turn_loop(state: AppState, turn: Turn, provider: String, model: S
         // This handles cases like LLM provider errors that are not caught
         // inside the loop itself.
         if let Err(e) = loop_result {
-            error!("Turn loop failed for {}: {}", turn.id, e);
+            let error_chain = e.diagnostic_chain();
+            error!(
+                turn_id = %turn.id,
+                error = %e,
+                error_chain = ?error_chain,
+                error_debug = ?e,
+                "turn loop failed"
+            );
 
             // Reload the turn to check its current state. It may have been
             // cancelled or completed by a concurrent operation while the
@@ -1101,8 +1108,14 @@ async fn spawn_turn_loop(state: AppState, turn: Turn, provider: String, model: S
                 return;
             }
 
-            // Persist the error as a FAILED state
-            let error_json = json!({ "kind": "loop_error", "message": e.to_string() });
+            // Persist the full chain as structured JSON so the frontend can
+            // show the actual provider/parser layer instead of a flat string.
+            let error_json = json!({
+                "kind": "loop_error",
+                "message": e.to_string(),
+                "chain": error_chain,
+                "debug": format!("{e:?}"),
+            });
             let failed_payload = json!({
                 "error": error_json.clone(),
             });

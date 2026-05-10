@@ -49,13 +49,26 @@ describe('MessageView', () => {
     expect(screen.getByText('gpt-5.5')).toBeInTheDocument();
   });
 
-  it('renders error JSON when error is present', () => {
+  it('renders structured error diagnostics when error is present', () => {
     render(
       <MessageView
-        turn={makeTurn({ error: { message: 'rate_limit' }, status: 'failed' })}
+        turn={makeTurn({
+          error: {
+            kind: 'loop_error',
+            message: 'rate_limit',
+            chain: ['LLM API error', 'provider said no'],
+            debug: 'src/llm/openai/adapter.rs:120',
+          },
+          status: 'failed',
+        })}
       />,
     );
     expect(screen.getByText(/rate_limit/)).toBeInTheDocument();
+    expect(screen.getByText('Diagnostics')).toBeInTheDocument();
+    expect(screen.getByText(/provider said no/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/src\/llm\/openai\/adapter.rs:120/),
+    ).toBeInTheDocument();
   });
 
   it('renders markdown bold as <strong>', () => {

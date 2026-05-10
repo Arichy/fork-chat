@@ -90,7 +90,7 @@ impl AnthropicClient {
             .json(req)
             .send()
             .await
-            .map_err(|e| AppError::LlmApiError(format!("anthropic request failed: {e}")))?;
+            .map_err(|e| AppError::llm_api_with_source("anthropic request failed", e))?;
 
         let status = resp.status();
         if !status.is_success() {
@@ -98,19 +98,19 @@ impl AnthropicClient {
             // Anthropic returns structured error JSON, but we just surface it
             // as-is since the caller can parse it if needed.
             let body = resp.text().await.unwrap_or_default();
-            return Err(AppError::LlmApiError(format!("anthropic {status}: {body}")));
+            return Err(AppError::llm_api(format!("anthropic {status}: {body}")));
         }
 
         // First parse: raw JSON for storage (preserves all fields).
         let raw = resp
             .json::<JsonValue>()
             .await
-            .map_err(|e| AppError::LlmApiError(format!("anthropic decode failed: {e}")))?;
+            .map_err(|e| AppError::llm_api_with_source("anthropic decode failed", e))?;
 
         // Second parse: typed struct for convenient access.  We clone the
         // raw value here since `serde_json::from_value` consumes its input.
         let parsed = serde_json::from_value::<MessagesResponse>(raw.clone())
-            .map_err(|e| AppError::LlmApiError(format!("anthropic parse failed: {e}")))?;
+            .map_err(|e| AppError::llm_api_with_source("anthropic parse failed", e))?;
 
         Ok(MessagesResult { parsed, raw })
     }

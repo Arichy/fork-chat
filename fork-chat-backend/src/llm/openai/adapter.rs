@@ -1,17 +1,15 @@
-//! OpenAI Responses-API adapter. Uses the `async-openai` crate. Stays
-//! compatible with older turns whose `turn_messages` is an empty array by falling
-//! back to the plain user/assistant text pair.
+//! OpenAI Responses-API adapter. Uses `async-openai` for wire structs and
+//! `reqwest` for transport so upstream status/body diagnostics remain visible.
+//! Stays compatible with older turns whose `turn_messages` is an empty array by
+//! falling back to the plain user/assistant text pair.
 
 use std::time::Duration;
 
-use async_openai::Client;
-use async_openai::config::OpenAIConfig;
 use async_openai::types::responses::{
     CreateResponse, FunctionTool, InputItem, InputParam, OutputItem, OutputMessageContent,
     Response, Tool,
 };
 use async_trait::async_trait;
-use backoff::ExponentialBackoffBuilder;
 use serde_json::Value as JsonValue;
 use tracing::debug;
 
@@ -22,42 +20,32 @@ use crate::tooling::tool_definitions;
 
 use super::message_builder::build_input_items;
 
-/// Concrete `ChatAdapter` that talks to the OpenAI Responses API via the
-/// `async-openai` crate.  A single instance is created per (protocol, provider)
-/// pair at startup and shared through `Arc` inside the `ProviderRegistry`.
+/// Concrete `ChatAdapter` that talks to the OpenAI Responses API. A single
+/// instance is created per (protocol, provider) pair at startup and shared
+/// through `Arc` inside the `ProviderRegistry`.
 pub struct OpenaiAdapter {
-    client: Client<OpenAIConfig>,
+    http: reqwest::Client,
+    base_url: String,
+    api_key: String,
 }
 
 impl OpenaiAdapter {
     /// Create a new adapter pointed at the given `base_url`.
     ///
-    /// # The `no_retry` flag
-    ///
-    /// The `async-openai` crate ships with exponential-backoff retry logic that
-    /// defaults to a 15-minute window on transient failures.  In tests that use
-    /// wiremock to simulate 5xx responses, this retry loop would cause the test
-    /// to hang.  When `no_retry` is `true`, we replace the backoff with a
-    /// zero-elapsed-time policy so the crate returns the error immediately
-    /// instead of retrying.
-    pub fn new(base_url: &str, api_key: &str, no_retry: bool) -> Self {
-        let openai_config = OpenAIConfig::new()
-            .with_api_key(api_key)
-            .with_api_base(base_url);
-        let client = Client::with_config(openai_config);
+    /// The `_no_retry` argument is kept for registry-level test configuration.
+    /// This direct `reqwest` path performs one request per send, so wiremock
+    /// tests already fail quickly without SDK retry tuning.
+    pub fn new(base_url: &str, api_key: &str, _no_retry: bool) -> Self {
+        let http = reqwest::Client::builder()
+            .timeout(Duration::from_secs(60))
+            .build()
+            .expect("failed to build reqwest client");
 
-        // Zero-out the retry backoff when requested (tests only).  In
-        // production the default retry policy is desirable to ride out
-        // transient network blips or rate-limit 429s.
-        let client = if no_retry {
-            let zero = ExponentialBackoffBuilder::new()
-                .with_max_elapsed_time(Some(Duration::from_millis(0)))
-                .build();
-            client.with_backoff(zero)
-        } else {
-            client
-        };
-        Self { client }
+        Self {
+            http,
+            base_url: base_url.to_string(),
+            api_key: api_key.to_string(),
+        }
     }
 
     /// Low-level send that accepts a pre-built `Vec<InputItem>` and returns the
@@ -101,11 +89,49 @@ impl OpenaiAdapter {
 
         debug!("Request to openai: {:?}", request);
 
-        self.client
-            .responses()
-            .create(request)
+        let url = format!("{}/responses", self.base_url.trim_end_matches('/'));
+        let resp = self
+            .http
+            .post(&url)
+            .bearer_auth(&self.api_key)
+            .json(&request)
+            .send()
             .await
-            .map_err(|e| AppError::LlmApiError(e.to_string()))
+            .map_err(|e| {
+                AppError::llm_api_with_source(
+                    format!("openai-compatible request failed: POST {url}"),
+                    e,
+                )
+            })?;
+
+        let status = resp.status();
+        let request_id = response_request_id(resp.headers());
+        let body = resp.text().await.map_err(|e| {
+            AppError::llm_api_with_source(
+                format!("openai-compatible response body read failed: POST {url}"),
+                e,
+            )
+        })?;
+
+        if !status.is_success() {
+            return Err(AppError::llm_api(format!(
+                "openai-compatible upstream returned {status}{} from POST {url}: {}",
+                format_request_id(&request_id),
+                body_preview(&body)
+            )));
+        }
+
+        serde_json::from_str::<Response>(&body).map_err(|e| {
+            AppError::llm_api_with_source(
+                format!(
+                    "openai-compatible /responses decode failed (status {status}{}, body_len={}, body_preview={})",
+                    format_request_id(&request_id),
+                    body.len(),
+                    body_preview(&body)
+                ),
+                e,
+            )
+        })
     }
 
     /// Walk the OpenAI Responses API output and pull out the first piece of
@@ -161,6 +187,39 @@ impl OpenaiAdapter {
     }
 }
 
+fn response_request_id(headers: &reqwest::header::HeaderMap) -> Option<String> {
+    headers
+        .get("x-request-id")
+        .or_else(|| headers.get("request-id"))
+        .and_then(|value| value.to_str().ok())
+        .map(ToOwned::to_owned)
+}
+
+fn format_request_id(request_id: &Option<String>) -> String {
+    request_id
+        .as_ref()
+        .map(|id| format!(", request_id={id}"))
+        .unwrap_or_default()
+}
+
+fn body_preview(body: &str) -> String {
+    let body = body.trim();
+    if body.is_empty() {
+        return "<empty>".to_string();
+    }
+
+    let max_chars = 2_000;
+    let mut preview: String = body.chars().take(max_chars).collect();
+
+    // Provider errors can include long HTML or gateway pages; cap the copy we
+    // store in the turn so diagnostics stay readable and database rows small.
+    if body.chars().count() > max_chars {
+        preview.push_str("...<truncated>");
+    }
+
+    preview
+}
+
 #[async_trait]
 impl ChatAdapter for OpenaiAdapter {
     /// Full send flow for the OpenAI Responses API:
@@ -182,11 +241,13 @@ impl ChatAdapter for OpenaiAdapter {
         model: &str,
         instructions: Option<&str>,
     ) -> Result<SendResult, AppError> {
+        tracing::info!("Sending request to openai");
         // Step 1: reconstruct the conversation history as OpenAI InputItems.
         let input = build_input_items(history, new_user_text);
 
         // Step 2: send the request to the Responses API.
         let response = self.send_raw(input, model, instructions).await?;
+        debug!("Response from openai: {:?}", response);
 
         // Step 3: extract the various result fields from the response.
         let assistant_text = Self::extract_assistant_text(&response);

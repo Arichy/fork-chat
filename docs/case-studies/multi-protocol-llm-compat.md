@@ -46,7 +46,7 @@ Handler (protocol-agnostic)
   v
 ProviderRegistry: Map<Protocol, Map<provider_name, Arc<dyn ChatAdapter>>>
   |
-  +-- OpenAI  --> OpenaiAdapter  (uses async-openai crate)
+  +-- OpenAI  --> OpenaiAdapter  (reqwest transport + async-openai wire types)
   +-- Anthropic --> AnthropicAdapter (hand-rolled reqwest client)
 ```
 
@@ -101,7 +101,9 @@ pub struct ProviderConfig {
 
 This means DeepSeek (OpenAI-compatible) only needs a config entry with `protocol: "openai"` -- no new adapter code.
 
-**4. Different HTTP clients per adapter.** The OpenAI adapter uses the `async-openai` crate (which provides typed Request/Response structs), while the Anthropic adapter uses a hand-rolled `reqwest` client with custom serde types. This lets us leverage existing ecosystem tooling where it exists and write minimal code where it doesn't.
+**4. Typed protocol structs, explicit HTTP diagnostics.** The OpenAI adapter uses `async-openai`'s Responses API structs for request/response typing, but sends requests with `reqwest` directly. That split is intentional: SDK-level transport errors can hide the upstream status/body when an OpenAI-compatible provider returns an empty or non-Responses response. Reading the raw body first lets failed turns preserve `status`, `request_id`, `body_len`, and a bounded body preview. The Anthropic adapter already uses a hand-rolled `reqwest` client with custom serde types for the same reason.
+
+**5. LLM errors keep construction location and source chains.** `AppError::llm_api()` and `AppError::llm_api_with_source()` record the Rust call site that created the error. When a turn loop fails, `turn_lifecycle.rs` stores a structured `chain` and `debug` field in the turn error JSON, and logs the same chain through `tracing`. This makes provider compatibility failures diagnosable from the UI and server logs instead of collapsing into a single string like `EOF while parsing a value`.
 
 ### Message Builder Differences
 
@@ -125,13 +127,19 @@ The `ProviderRegistry` is built at startup from `config.json`:
 for provider in &config.providers {
     for (&protocol, binding) in &provider.protocols {
         let adapter: Arc<dyn ChatAdapter> = match protocol {
-            Protocol::Openai => Arc::new(openai::OpenaiAdapter::new(&binding.base_url, &binding.api_key)),
+            Protocol::Openai => Arc::new(openai::OpenaiAdapter::new(&binding.base_url, &binding.api_key, opts.openai_no_retry)),
             Protocol::Anthropic => Arc::new(anthropic::AnthropicAdapter::new(&binding.base_url, &binding.api_key)),
         };
         // store in registry[protocol][provider_name]
     }
 }
 ```
+
+Provider secrets can stay outside the JSON file. During `Config::load`, string
+placeholders like `"${DEEPSEEK_API_KEY}"` are expanded from the process
+environment before the config crate deserializes the final structure. That
+keeps adding an OpenAI-compatible or Anthropic-compatible provider config-only
+while avoiding committed API keys.
 
 The frontend discovers available options via `GET /api/config`, which returns protocols, providers (with supported protocols and models), and tools. API keys are never exposed to the frontend.
 
@@ -140,13 +148,18 @@ The frontend discovers available options via `GET /api/config`, which returns pr
 - A single async trait with a uniform return type is enough to fully abstract away protocol differences. Keep the trait narrow -- one method forces you to normalize at the right level.
 - Store protocol-native data rather than inventing a canonical format. Translation layers leak; opaque JSON in the database preserves everything.
 - New providers that speak an existing protocol should be config-only entries, never require code changes.
+- Provider API keys can be referenced as `${ENV_VAR}` placeholders in `config.json` so secrets stay out of the file.
 - Message builders are the highest-risk code -- they must handle multiple serialization formats and maintain round-trip fidelity. Test them thoroughly with real protocol responses.
+- For OpenAI-compatible providers, treat the wire protocol and the endpoint surface as separate compatibility questions. If a provider does not actually implement `/responses`, diagnostics must expose the raw status/body so the mismatch is obvious.
+- Failed turn errors should carry a source chain and construction location. A terse frontend error is acceptable only when the server logs and stored turn JSON retain the deeper provider/parser context.
 - Lock protocol at session creation to avoid cross-contamination. Different sessions can use different protocols, but a single session is internally consistent.
 
 ## References
 
 - `fork-chat-backend/src/llm/mod.rs` -- `ChatAdapter` trait, `SendResult`, `ProviderRegistry`
-- `fork-chat-backend/src/llm/openai/adapter.rs` -- OpenAI adapter using `async-openai`
+- `fork-chat-backend/src/error.rs` -- `AppError` helpers that attach LLM error locations and source chains
+- `fork-chat-backend/src/turn_lifecycle.rs` -- Failed-turn persistence for structured error diagnostics
+- `fork-chat-backend/src/llm/openai/adapter.rs` -- OpenAI-compatible adapter using `reqwest` transport with `async-openai` wire types
 - `fork-chat-backend/src/llm/openai/message_builder.rs` -- OpenAI message reconstruction
 - `fork-chat-backend/src/llm/anthropic/adapter.rs` -- Anthropic adapter using `reqwest`
 - `fork-chat-backend/src/llm/anthropic/message_builder.rs` -- Anthropic message reconstruction

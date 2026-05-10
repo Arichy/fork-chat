@@ -48,6 +48,7 @@ root [justfile](justfile) to separate
 ```bash
 pnpm --dir fork-chat-frontend install
 cp fork-chat-backend/config.example.json fork-chat-backend/config.json
+cp fork-chat-backend/.env.example fork-chat-backend/.env
 # fill in the provider API keys/models you want to use
 
 just build
@@ -123,6 +124,16 @@ Environment variables (see [.env.example](fork-chat-backend/.env.example)):
 | `FORK_CHAT_FRONTEND_DIST_DIR` | Optional path to the built frontend `dist` directory for Axum static serving. |
 | `DATABASE_URL`     | Postgres connection string. Overrides `database_url` from the JSON file if set.     |
 | `FORK_CHAT_<KEY>`  | Any JSON field can be overridden via env (use `__` as the nesting separator).       |
+
+String values in `config.json` can also reference environment variables with
+`${NAME}` placeholders. This is the recommended way to keep provider API keys
+out of the JSON file:
+
+```json
+{
+  "api_key": "${DEEPSEEK_API_KEY}"
+}
+```
 
 ### 2. Frontend
 

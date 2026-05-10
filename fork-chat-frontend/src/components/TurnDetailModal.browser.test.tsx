@@ -166,15 +166,23 @@ describe('TurnDetailModal', () => {
     expect(screen.getByText('gpt-5.5')).toBeInTheDocument();
   });
 
-  it('renders error JSON for failed turns', () => {
+  it('renders structured error diagnostics for failed turns', () => {
     renderModal({
       turn: makeTurn({
         status: 'failed',
-        error: { message: 'network_error' },
+        error: {
+          kind: 'loop_error',
+          message: 'network_error',
+          chain: ['LLM API error', 'EOF while parsing a value'],
+          debug: 'turn_lifecycle.rs:1090',
+        },
       }),
       open: true,
     });
     expect(screen.getByText(/network_error/)).toBeInTheDocument();
+    expect(screen.getByText('Diagnostics')).toBeInTheDocument();
+    expect(screen.getByText(/EOF while parsing a value/)).toBeInTheDocument();
+    expect(screen.getByText(/turn_lifecycle.rs:1090/)).toBeInTheDocument();
   });
 
   it('renders approval actions inside the matching tool call card', async () => {

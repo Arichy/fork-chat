@@ -2,10 +2,10 @@
 //! dispatches requests to the right concrete adapter based on a session's
 //! `protocol` and its turn's `provider` name.
 //!
-//! Only two protocols are implemented: `openai` (via the `async-openai` crate's
-//! Responses API) and `anthropic` (hand-rolled `reqwest` client). Additional
-//! vendors (DeepSeek, GLM, Kimi, ...) are pure config entries under whichever
-//! protocol they speak — no new adapter needed.
+//! Only two protocols are implemented: `openai` (Responses API wire types over
+//! direct `reqwest` transport) and `anthropic` (hand-rolled `reqwest` client).
+//! Additional vendors (DeepSeek, GLM, Kimi, ...) are pure config entries under
+//! whichever protocol they speak — no new adapter needed.
 
 pub mod anthropic;
 pub mod openai;
@@ -58,14 +58,14 @@ pub struct ProviderRegistry {
 }
 
 impl ProviderRegistry {
-    /// Build the default registry: one async-openai client per openai binding,
-    /// one reqwest-based Anthropic client per anthropic binding.
+    /// Build the default registry: one OpenAI-compatible adapter per openai
+    /// binding, one reqwest-based Anthropic client per anthropic binding.
     pub fn from_config(config: &Config) -> Self {
         Self::from_config_with(config, RegistryOptions::default())
     }
 
-    /// Same as [`Self::from_config`] but with explicit backoff / timeout tuning.
-    /// Useful in tests (e.g. zero-retry to avoid hangs on simulated 5xx).
+    /// Same as [`Self::from_config`] but with explicit compatibility knobs.
+    /// Useful in tests that need shorter timeouts or retained no-retry config.
     pub fn from_config_with(config: &Config, opts: RegistryOptions) -> Self {
         // Two-level HashMap: outer key is the wire protocol (OpenAI / Anthropic),
         // inner key is the provider name from config (e.g. "openai", "deepseek",
@@ -116,14 +116,11 @@ impl ProviderRegistry {
     }
 }
 
-/// Knobs used by [`ProviderRegistry::from_config_with`]. Tests disable the
-/// async-openai default exponential backoff so simulated 5xx responses don't
-/// cause long retry waits.
+/// Knobs used by [`ProviderRegistry::from_config_with`].
 #[derive(Debug, Clone)]
 pub struct RegistryOptions {
-    /// When `true`, the OpenAI adapter's backoff is set to zero elapsed time.
-    /// This prevents the `async-openai` crate from retrying on 5xx errors,
-    /// which would cause wiremock-based tests to hang for up to 15 minutes.
+    /// Retained for tests and older call sites. The current OpenAI-compatible
+    /// adapter performs direct one-shot HTTP requests, so this flag is a no-op.
     pub openai_no_retry: bool,
     /// HTTP timeout applied to the Anthropic `reqwest` client.
     pub anthropic_timeout: Duration,

@@ -2,6 +2,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { TURN_STATUS } from '../api/turnStream';
 import type { Turn } from '../api/types';
+import { TurnErrorDetails } from './TurnErrorDetails';
 
 interface MessageViewProps {
   turn: Turn;
@@ -56,8 +57,8 @@ export function MessageView({ turn }: MessageViewProps) {
       )}
 
       {turn.error && (
-        <div className="mt-2 p-2 bg-red-50 text-red-600 rounded">
-          Error: {JSON.stringify(turn.error)}
+        <div className="mt-2">
+          <TurnErrorDetails error={turn.error} />
         </div>
       )}
     </div>

@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value as JsonValue;
 use sqlx::PgPool;
 
 use crate::llm::ProviderRegistry;
@@ -171,6 +172,9 @@ impl Config {
         let path: PathBuf = std::env::var("FORK_CHAT_CONFIG")
             .unwrap_or_else(|_| "./config.json".to_string())
             .into();
+        let config_text = std::fs::read_to_string(&path)
+            .map_err(|e| eyre::eyre!("failed to read config file '{}': {e}", path.display()))?;
+        let expanded_config_text = expand_env_placeholders(&config_text)?;
 
         // Layer 1: JSON file (base values).
         // Layer 2: Environment with prefix `FORK_CHAT_` (overrides).
@@ -178,7 +182,10 @@ impl Config {
         // coercion (e.g. string "3000" -> integer 3000), which is necessary
         // because env vars are always strings.
         let cfg = config::Config::builder()
-            .add_source(config::File::from(path).format(config::FileFormat::Json))
+            .add_source(config::File::from_str(
+                &expanded_config_text,
+                config::FileFormat::Json,
+            ))
             .add_source(
                 config::Environment::with_prefix("FORK_CHAT")
                     .separator("__")
@@ -276,6 +283,141 @@ impl Config {
         }
 
         Ok(())
+    }
+}
+
+fn expand_env_placeholders(input: &str) -> eyre::Result<String> {
+    expand_env_placeholders_with(input, |name| std::env::var(name).ok())
+}
+
+fn expand_env_placeholders_with<F>(input: &str, mut lookup: F) -> eyre::Result<String>
+where
+    F: FnMut(&str) -> Option<String>,
+{
+    let mut json: JsonValue = serde_json::from_str(input)
+        .map_err(|e| eyre::eyre!("config: failed to parse JSON before env expansion: {e}"))?;
+    expand_env_placeholders_in_value(&mut json, &mut lookup)?;
+
+    serde_json::to_string(&json)
+        .map_err(|e| eyre::eyre!("config: failed to serialize expanded JSON: {e}"))
+}
+
+fn expand_env_placeholders_in_value<F>(value: &mut JsonValue, lookup: &mut F) -> eyre::Result<()>
+where
+    F: FnMut(&str) -> Option<String>,
+{
+    match value {
+        JsonValue::String(text) => {
+            *text = expand_env_placeholders_in_string(text, lookup)?;
+        }
+        JsonValue::Array(items) => {
+            for item in items {
+                // Arrays can contain nested objects/strings, so walk every
+                // element instead of assuming placeholders appear only at the
+                // top-level config keys.
+                expand_env_placeholders_in_value(item, lookup)?;
+            }
+        }
+        JsonValue::Object(entries) => {
+            for nested in entries.values_mut() {
+                // Config values are structurally nested, so recurse through
+                // each object value to replace placeholders wherever they live.
+                expand_env_placeholders_in_value(nested, lookup)?;
+            }
+        }
+        JsonValue::Null | JsonValue::Bool(_) | JsonValue::Number(_) => {}
+    }
+
+    Ok(())
+}
+
+fn expand_env_placeholders_in_string<F>(input: &str, mut lookup: F) -> eyre::Result<String>
+where
+    F: FnMut(&str) -> Option<String>,
+{
+    let mut output = String::with_capacity(input.len());
+    let mut rest = input;
+
+    while let Some(start) = rest.find("${") {
+        output.push_str(&rest[..start]);
+
+        let placeholder = &rest[start + 2..];
+        let Some(end) = placeholder.find('}') else {
+            eyre::bail!("config: unterminated environment placeholder");
+        };
+
+        let name = &placeholder[..end];
+        if name.is_empty() {
+            eyre::bail!("config: empty environment placeholder");
+        }
+
+        // Missing secrets should fail startup immediately; otherwise a literal
+        // `${NAME}` could be sent to an upstream provider as an API key.
+        let value = lookup(name)
+            .ok_or_else(|| eyre::eyre!("config: environment variable '{name}' is not set"))?;
+        output.push_str(&value);
+
+        rest = &placeholder[end + 1..];
+    }
+
+    output.push_str(rest);
+    Ok(output)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use serde_json::Value as JsonValue;
+
+    use super::expand_env_placeholders_with;
+
+    #[test]
+    fn expands_environment_placeholders_inside_config_text() {
+        let values = HashMap::from([
+            ("DEEPSEEK_API_KEY", "secret-key"),
+            ("DATABASE_HOST", "localhost"),
+        ]);
+
+        let expanded = expand_env_placeholders_with(
+            r#"{"api_key":"${DEEPSEEK_API_KEY}","database_url":"postgres://${DATABASE_HOST}/db"}"#,
+            |name| values.get(name).map(|value| value.to_string()),
+        )
+        .unwrap();
+
+        assert_eq!(
+            expanded,
+            r#"{"api_key":"secret-key","database_url":"postgres://localhost/db"}"#
+        );
+    }
+
+    #[test]
+    fn placeholder_values_are_json_escaped_after_expansion() {
+        let values = HashMap::from([("SPECIAL", "line 1\n\"quoted\"\\slash")]);
+
+        let expanded = expand_env_placeholders_with(r#"{"message":"${SPECIAL}"}"#, |name| {
+            values.get(name).map(|value| value.to_string())
+        })
+        .unwrap();
+
+        let reparsed: JsonValue = serde_json::from_str(&expanded).unwrap();
+        assert_eq!(reparsed["message"], "line 1\n\"quoted\"\\slash");
+    }
+
+    #[test]
+    fn missing_environment_placeholder_fails_fast() {
+        let err = expand_env_placeholders_with(r#"{"api_key":"${MISSING_API_KEY}"}"#, |_| None)
+            .unwrap_err();
+
+        assert!(err.to_string().contains("MISSING_API_KEY"));
+    }
+
+    #[test]
+    fn unterminated_environment_placeholder_is_rejected() {
+        let err = expand_env_placeholders_with(r#"{"api_key":"${MISSING_API_KEY"}"#, |_| None)
+            .unwrap_err();
+
+        assert!(err.to_string().contains("unterminated"));
     }
 }
 

@@ -21,6 +21,7 @@ import remarkGfm from 'remark-gfm';
 import { TURN_RUNTIME_KEY, TURN_STATUS } from '../api/turnStream';
 import type { ApproveDecisionKind, Protocol, Turn } from '../api/types';
 import { MessageInput } from './MessageInput';
+import { TurnErrorDetails } from './TurnErrorDetails';
 import { Button } from './ui/button';
 import {
   Dialog,
@@ -525,11 +526,7 @@ export function TurnDetailModal({
           )}
 
           {/* Error display */}
-          {displayTurn.error && (
-            <div className="p-3 bg-red-50 text-red-600 rounded text-sm">
-              Error: {JSON.stringify(displayTurn.error)}
-            </div>
-          )}
+          {displayTurn.error && <TurnErrorDetails error={displayTurn.error} />}
 
           {/* Full transcript trace */}
           {traceItems.length > 0 && (
