@@ -727,7 +727,9 @@ export function TurnDetailModal({
                           </div>
                         )}
                         {/* Show raw error block for debugging if the tool result is an error. */}
-                        {item.isError && item.raw && (
+                        {/* `raw` is typed as `unknown`, so we narrow it with an
+                            explicit nullish check before handing JSX a child. */}
+                        {item.isError && item.raw != null && (
                           <pre className="mt-2 text-xs bg-red-50 border border-red-200 rounded p-2 whitespace-pre-wrap break-words text-red-700">
                             {stringify(item.raw)}
                           </pre>

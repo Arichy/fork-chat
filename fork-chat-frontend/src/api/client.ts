@@ -1,15 +1,69 @@
 /**
  * HTTP API client for the fork-chat backend.
  *
- * All endpoints are prefixed with `API_BASE` (currently hardcoded to
- * `http://localhost:3000/api`). Each method returns a typed promise, making
+ * All endpoints are prefixed with `API_BASE`, which prefers an explicit Vite
+ * env override and otherwise follows the current browser origin. That keeps
+ * local built-frontend/Axum deployments same-origin while still allowing cross-origin
+ * overrides for unusual setups. Each method returns a typed promise, making
  * the client safe to use with React Query's type inference.
  *
  * The one exception is `streamUrl` which returns a URL string instead of
  * fetching — see its doc comment for details.
  */
 
-const API_BASE = 'http://localhost:3000/api';
+export const DEFAULT_DEV_API_BASE = 'http://localhost:3000/api';
+
+/**
+ * Remove a trailing slash so callers can safely append `/api` or resource
+ * paths without producing double slashes.
+ */
+function trimTrailingSlash(value: string): string {
+  return value.replace(/\/+$/, '');
+}
+
+/**
+ * Resolve the backend base URL for the current runtime.
+ *
+ * Resolution order:
+ * 1. `VITE_API_BASE_URL` when the deploy environment needs an explicit API host
+ * 2. current browser origin for same-origin deploys and Vite's `/api` proxy
+ * 3. backend's default dev port for non-browser contexts like node-based tests
+ */
+export function resolveApiBase(options?: {
+  envBase?: string;
+  browserOrigin?: string | null;
+}): string {
+  const envBase = options?.envBase?.trim();
+  if (envBase && envBase.length > 0) {
+    return trimTrailingSlash(envBase);
+  }
+
+  const browserOrigin = options?.browserOrigin?.trim();
+  // Only trust real HTTP(S) origins here. Test environments can report
+  // `about:blank`, which would otherwise produce unusable request URLs.
+  if (
+    browserOrigin &&
+    browserOrigin.length > 0 &&
+    /^https?:\/\//.test(browserOrigin)
+  ) {
+    return `${trimTrailingSlash(browserOrigin)}/api`;
+  }
+
+  return DEFAULT_DEV_API_BASE;
+}
+
+function getBrowserOrigin(): string | null {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  return window.location.origin;
+}
+
+const API_BASE = resolveApiBase({
+  envBase: import.meta.env.VITE_API_BASE_URL,
+  browserOrigin: getBrowserOrigin(),
+});
 
 /**
  * Generic fetch wrapper that adds JSON headers and throws on non-2xx responses.

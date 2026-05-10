@@ -43,6 +43,14 @@ async fn main() -> eyre::Result<()> {
     let db = db::create_pool(&config.database_url).await?;
     tracing::info!("Connected to database");
 
+    // --- Step 3.5: Apply migrations ---
+    // Local Docker deploys should be able to come up from an empty Postgres
+    // volume without any manual `sqlx migrate run` step. Running migrations on
+    // startup keeps that path deterministic while remaining a no-op when the
+    // schema is already current.
+    sqlx::migrate!("./migrations").run(&db).await?;
+    tracing::info!("Applied database migrations");
+
     // --- Step 4: Recover from prior crashes ---
     // Any turn that was `running` or `awaiting_approval` when the process
     // stopped (crash, SIGKILL, OOM, etc.) is now orphaned — no task is driving

@@ -128,6 +128,11 @@ pub struct Config {
     /// Socket address to bind the HTTP server to. Defaults to `0.0.0.0:3000`.
     #[serde(default = "default_server_addr")]
     pub server_addr: String,
+    /// Optional directory containing the built frontend assets (`index.html`,
+    /// JS, CSS, fonts, etc.). When present and valid, the backend will serve
+    /// those files directly instead of requiring a separate frontend server.
+    #[serde(default)]
+    pub frontend_dist_dir: Option<String>,
     /// List of LLM providers.  At least one required (enforced by `validate`).
     pub providers: Vec<ProviderConfig>,
 }
@@ -198,6 +203,8 @@ impl Config {
     /// - `database_url` must be non-empty (a missing value would cause a
     ///   confusing sqlx error later).
     /// - `providers` must be non-empty (no point running without providers).
+    /// - `frontend_dist_dir`, when provided, must not be an empty string
+    ///   (blank paths silently disable static serving and are hard to debug).
     /// - Each provider name must be non-empty and globally unique (used as a
     ///   lookup key throughout the codebase).
     /// - Each provider must declare at least one protocol binding (otherwise
@@ -212,6 +219,13 @@ impl Config {
         }
         if self.providers.is_empty() {
             eyre::bail!("config: providers must be non-empty");
+        }
+        if self
+            .frontend_dist_dir
+            .as_deref()
+            .is_some_and(|dir| dir.trim().is_empty())
+        {
+            eyre::bail!("config: frontend_dist_dir must not be empty when provided");
         }
 
         // Track provider names globally to detect duplicates across the list.

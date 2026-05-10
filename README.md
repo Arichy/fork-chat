@@ -33,12 +33,69 @@ fork-chat/
 
 - Node.js ≥ 20 and `pnpm`
 - Rust (stable) and `cargo`
+- [`just`](https://github.com/casey/just) for the repo-level local workflow
 - PostgreSQL 14+ for local development, or Docker for `just db-up`
 - `sqlx-cli` (`cargo install sqlx-cli --no-default-features --features postgres`)
 - Docker for backend integration tests (`testcontainers`)
-- Optional: [`just`](https://github.com/casey/just), [`bacon`](https://github.com/Canop/bacon), [`cargo-nextest`](https://nexte.st/)
+- Optional: [`bacon`](https://github.com/Canop/bacon), [`cargo-nextest`](https://nexte.st/)
 
-## Setup
+## Local deployment
+
+If you want the app to run like a finished product locally, the repo now uses a
+root [justfile](justfile) to separate
+"build once" from "restart quickly".
+
+```bash
+pnpm --dir fork-chat-frontend install
+cp fork-chat-backend/config.example.json fork-chat-backend/config.json
+# fill in the provider API keys/models you want to use
+
+just build
+just run
+# app: http://127.0.0.1:<backend port from config.json, default 3000>
+```
+
+Notes:
+
+- `just build` compiles the frontend bundle and the backend release binary.
+- `just run` starts local Postgres and launches the already-built backend
+  binary, so restart time stays low.
+- `just up` is the convenience "build then run" path for the first launch.
+- Stop the backend with `Ctrl-C`, then run `just db-down` if you also want to
+  stop the local Postgres container.
+- The backend now runs SQL migrations automatically on startup, so a fresh
+  local deploy does not need a separate `sqlx migrate run`.
+- When `fork-chat-frontend/dist/index.html` exists, Axum serves the built SPA
+  directly and uses `index.html` as the fallback for client-side routes.
+- If startup fails with `migration ... was previously applied but has been modified`,
+  run `just db-nuke` and then `just run`.
+
+## Development setup
+
+For split frontend/backend development from the repo root:
+
+```bash
+just dev
+```
+
+That starts:
+
+- backend API on `http://127.0.0.1:<backend port from config.json, default 3000>`
+- frontend Vite dev server on `http://127.0.0.1:5173`
+
+If you want them in separate terminals, use `just dev-backend` and
+`just dev-frontend`.
+
+If the backend port changes, you do not need to edit the Vite config anymore.
+Vite reads `fork-chat-backend/config.json` by default and keeps the `/api`
+proxy in sync with `server_addr`.
+
+```bash
+# fork-chat-backend/config.json
+{
+  "server_addr": "0.0.0.0:4000"
+}
+```
 
 ### 1. Backend
 
@@ -54,11 +111,16 @@ cargo run                     # starts server on $server_addr (default 0.0.0.0:3
 
 Configuration is driven by a JSON file (see [`config.example.json`](fork-chat-backend/config.example.json)). Providers are declared explicitly and each one advertises which protocols (`openai`, `anthropic`) it speaks and under which base URL/API key. The frontend reads the resulting provider/model/protocol matrix from `GET /api/config`.
 
+If you already built the frontend, the backend will automatically try to serve
+`../fork-chat-frontend/dist` relative to the backend crate. You can override
+that path explicitly with `FORK_CHAT_FRONTEND_DIST_DIR`.
+
 Environment variables (see [.env.example](fork-chat-backend/.env.example)):
 
 | Variable           | Purpose                                                                             |
 | ------------------ | ----------------------------------------------------------------------------------- |
 | `FORK_CHAT_CONFIG` | Path to the JSON config file. Defaults to `./config.json`.                          |
+| `FORK_CHAT_FRONTEND_DIST_DIR` | Optional path to the built frontend `dist` directory for Axum static serving. |
 | `DATABASE_URL`     | Postgres connection string. Overrides `database_url` from the JSON file if set.     |
 | `FORK_CHAT_<KEY>`  | Any JSON field can be overridden via env (use `__` as the nesting separator).       |
 
@@ -69,6 +131,10 @@ cd fork-chat-frontend
 pnpm install
 pnpm dev                      # http://localhost:5173
 ```
+
+Vite now proxies `/api/*` to the backend port from
+`fork-chat-backend/config.json`, so local frontend development still works
+without hardcoding a separate API origin in the browser bundle.
 
 Other scripts: `pnpm build`, `pnpm typecheck`, `pnpm lint`, `pnpm format`, `pnpm check` (biome lint + format), `pnpm check:fix`.
 

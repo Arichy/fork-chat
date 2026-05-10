@@ -528,6 +528,9 @@ pub async fn spawn_app() -> TestApp {
     let config = Config {
         database_url: db_url,
         server_addr: "127.0.0.1:0".to_string(),
+        // Integration tests exercise the API surface directly, so they do not
+        // need the backend to serve a built frontend bundle.
+        frontend_dist_dir: None,
         providers: vec![
             ProviderConfig {
                 name: "openai".to_string(),

@@ -1,12 +1,39 @@
 import { HttpResponse, http } from 'msw';
 import { describe, expect, it } from 'vitest';
 import { server } from '../test/server-from-setup';
-import { api } from './client';
+import { DEFAULT_DEV_API_BASE, api, resolveApiBase } from './client';
 
 // Re-export the MSW server instance used by the setup file so tests can patch it.
 // (setup.ts already wires beforeAll/afterEach/afterAll.)
 
-const API_BASE = 'http://localhost:3000/api';
+const API_BASE = DEFAULT_DEV_API_BASE;
+
+describe('resolveApiBase', () => {
+  it('prefers an explicit env override', () => {
+    expect(
+      resolveApiBase({
+        envBase: 'https://example.test/custom-api/',
+        browserOrigin: 'http://localhost:5173',
+      }),
+    ).toBe('https://example.test/custom-api');
+  });
+
+  it('falls back to the current browser origin when no override is set', () => {
+    expect(
+      resolveApiBase({
+        browserOrigin: 'http://localhost:5173',
+      }),
+    ).toBe('http://localhost:5173/api');
+  });
+
+  it('uses the backend dev default when the browser origin is unusable', () => {
+    expect(
+      resolveApiBase({
+        browserOrigin: 'about:blank',
+      }),
+    ).toBe(DEFAULT_DEV_API_BASE);
+  });
+});
 
 describe('api.config', () => {
   it('GET /config returns the sanitized protocols + providers shape', async () => {
